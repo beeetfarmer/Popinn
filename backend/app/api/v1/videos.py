@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.models.artist import Artist
 from app.models.user import User
 from app.models.video import Video
-from app.schemas.video import VideoRead, VideoUpdate
+from app.schemas.video import VideoBulkDelete, VideoRead, VideoUpdate
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 
@@ -122,6 +122,51 @@ async def update_video(
     return _video_to_read(video, video.artist.name if video.artist else "")
 
 
+async def _cleanup_empty_artists(artist_ids: set[uuid.UUID], db: AsyncSession):
+    """Soft-delete artists that have zero active videos remaining."""
+    await db.flush()  # ensure pending deletes are visible to count queries
+    for artist_id in artist_ids:
+        count_result = await db.execute(
+            select(func.count(Video.id)).where(
+                Video.artist_id == artist_id, Video.deleted_at.is_(None)
+            )
+        )
+        if (count_result.scalar() or 0) == 0:
+            artist_result = await db.execute(
+                select(Artist).where(
+                    Artist.id == artist_id, Artist.deleted_at.is_(None)
+                )
+            )
+            artist = artist_result.scalar_one_or_none()
+            if artist:
+                artist.deleted_at = datetime.now(timezone.utc)
+
+
+@router.post("/bulk-delete", status_code=status.HTTP_204_NO_CONTENT)
+async def bulk_delete_videos(
+    body: VideoBulkDelete,
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Video).where(
+            Video.id.in_(body.video_ids), Video.deleted_at.is_(None)
+        )
+    )
+    videos = result.scalars().all()
+    if not videos:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No videos found")
+
+    artist_ids: set[uuid.UUID] = set()
+    now = datetime.now(timezone.utc)
+    for video in videos:
+        artist_ids.add(video.artist_id)
+        video.deleted_at = now
+
+    await _cleanup_empty_artists(artist_ids, db)
+    await db.commit()
+
+
 @router.delete("/{video_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_video(
     video_id: uuid.UUID,
@@ -135,5 +180,7 @@ async def delete_video(
     if not video:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
+    artist_id = video.artist_id
     video.deleted_at = datetime.now(timezone.utc)
+    await _cleanup_empty_artists({artist_id}, db)
     await db.commit()
