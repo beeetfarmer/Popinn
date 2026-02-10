@@ -1,0 +1,36 @@
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, computed_field
+
+
+class VideoRead(BaseModel):
+    id: uuid.UUID
+    title: str
+    artist_id: uuid.UUID
+    artist_name: str = ""
+    album: str | None = None
+    duration: int | None = None
+    thumbnail_url: str | None = None
+    video_url: str | None = None
+    year: int | None = None
+    genre: str | None = None
+    file_size: int | None = None
+    added_at: datetime | None = None
+
+    @computed_field
+    @property
+    def duration_display(self) -> str:
+        if self.duration is None:
+            return "0:00"
+        m, s = divmod(self.duration, 60)
+        return f"{m}:{s:02d}"
+
+    model_config = {"from_attributes": True}
+
+
+class VideoUpdate(BaseModel):
+    title: str | None = None
+    album: str | None = None
+    year: int | None = None
+    genre: str | None = None
