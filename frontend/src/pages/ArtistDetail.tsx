@@ -5,13 +5,25 @@ import { api } from "@/lib/api";
 import type { ArtistDetail as ArtistDetailType } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import PageTransition from "@/components/PageTransition";
-import { ArrowLeft, Upload } from "lucide-react";
+import { ArrowLeft, Upload, Pencil } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 
 export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const [dragOver, setDragOver] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editBio, setEditBio] = useState("");
 
   const { data: artist } = useQuery<ArtistDetailType>({
     queryKey: ["artist", id],
@@ -42,6 +54,30 @@ export default function ArtistDetail() {
     },
     onError: (err: any) => toast.error(err.message || "Failed to upload image"),
   });
+
+  const editMutation = useMutation({
+    mutationFn: () => {
+      const body: Record<string, unknown> = {};
+      if (editName.trim() && editName.trim() !== artist?.name) body.name = editName.trim();
+      if (editBio.trim() !== (artist?.bio || "")) body.bio = editBio.trim() || null;
+      return api.patch(`/artists/${id}`, body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["artist", id] });
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      setEditOpen(false);
+      toast.success("Artist updated");
+    },
+    onError: (err: any) => toast.error(err.message || "Failed to update"),
+  });
+
+  function openEdit() {
+    if (artist) {
+      setEditName(artist.name);
+      setEditBio(artist.bio || "");
+      setEditOpen(true);
+    }
+  }
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -127,7 +163,16 @@ export default function ArtistDetail() {
           </div>
 
           <div>
-            <h1 className="text-3xl font-bold text-foreground">{artist.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-3xl font-bold text-foreground">{artist.name}</h1>
+              <button
+                onClick={openEdit}
+                className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                title="Edit artist"
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+            </div>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
               {artist.bio}
             </p>
@@ -144,6 +189,36 @@ export default function ArtistDetail() {
             <VideoCard key={v.id} video={v} />
           ))}
         </div>
+        {/* Edit dialog */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Artist</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-foreground">Name</label>
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-foreground">Bio</label>
+                <Textarea
+                  value={editBio}
+                  onChange={(e) => setEditBio(e.target.value)}
+                  rows={4}
+                  placeholder="Artist biography..."
+                />
+              </div>
+              <Button
+                onClick={() => editMutation.mutate()}
+                className="w-full"
+                disabled={editMutation.isPending || !editName.trim()}
+              >
+                {editMutation.isPending ? "Saving..." : "Save Changes"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </PageTransition>
   );
