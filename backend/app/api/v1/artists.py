@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -25,7 +27,6 @@ def _to_media_url(abs_path: str | None, cache_bust: bool = False) -> str | None:
     if abs_path.startswith(media):
         url = "/media" + abs_path[len(media):]
         if cache_bust:
-            import os
             try:
                 mtime = int(os.path.getmtime(abs_path))
                 url += f"?v={mtime}"
@@ -163,3 +164,53 @@ async def delete_artist(
 
     artist.deleted_at = datetime.now(timezone.utc)
     await db.commit()
+
+
+@router.put("/{artist_id}/image", response_model=ArtistRead)
+async def upload_artist_image(
+    artist_id: uuid.UUID,
+    file: UploadFile,
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="File must be an image"
+        )
+
+    result = await db.execute(
+        select(Artist).where(Artist.id == artist_id, Artist.deleted_at.is_(None))
+    )
+    artist = result.scalar_one_or_none()
+    if not artist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
+
+    ext = os.path.splitext(file.filename or "img.jpg")[1] or ".jpg"
+    safe_name = artist.name.replace("/", "_").replace(" ", "_")
+    image_dir = os.path.join(settings.MEDIA_PATH, ".artist-images")
+    os.makedirs(image_dir, exist_ok=True)
+    image_path = os.path.join(image_dir, f"{safe_name}{ext}")
+
+    content = await file.read()
+    with open(image_path, "wb") as f:
+        f.write(content)
+
+    artist.image_path = image_path
+    await db.commit()
+    await db.refresh(artist)
+
+    count_result = await db.execute(
+        select(func.count(Video.id)).where(
+            Video.artist_id == artist.id, Video.deleted_at.is_(None)
+        )
+    )
+    video_count = count_result.scalar() or 0
+
+    return ArtistRead(
+        id=artist.id,
+        name=artist.name,
+        bio=artist.bio,
+        image_url=_to_media_url(artist.image_path, cache_bust=True),
+        video_count=video_count,
+        created_at=artist.created_at,
+    )
