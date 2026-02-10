@@ -28,15 +28,17 @@ class ScanResult:
 
 
 def _find_or_create_artist(session: Session, folder_name: str) -> tuple[Artist, bool]:
-    """Find an existing artist or create a new one. Returns (artist, is_new)."""
+    """Find an existing artist or create a new one. Returns (artist, is_new).
+
+    If the artist was soft-deleted by the user, restore it only when new
+    video files need to be added (caller decides). Otherwise return the
+    existing record as-is so we can still check for videos.
+    """
     result = session.execute(
         select(Artist).where(Artist.name == folder_name)
     )
     artist = result.scalar_one_or_none()
     if artist:
-        # Restore if soft-deleted
-        if artist.deleted_at is not None:
-            artist.deleted_at = None
         return artist, False
 
     artist = Artist(name=folder_name)
@@ -73,9 +75,7 @@ def _process_video(
     )
     existing = result.scalar_one_or_none()
     if existing:
-        if existing.deleted_at is not None:
-            existing.deleted_at = None
-            session.flush()
+        # Already tracked (active or user-deleted) — skip it
         return False
 
     title = _parse_title(os.path.basename(file_path), artist_name)
@@ -207,6 +207,7 @@ def run_scan(
 
                 # Collect video files in this artist folder
                 video_map: dict[str, Video] = {}
+                artist_added_count = 0
                 for fentry in sorted(os.scandir(entry.path), key=lambda e: e.name):
                     if not fentry.is_file():
                         continue
@@ -221,6 +222,7 @@ def run_scan(
                         )
                         if added:
                             result.files_added += 1
+                            artist_added_count += 1
                         # Build map for subtitle matching
                         vid_result = session.execute(
                             select(Video).where(Video.file_path == fentry.path)
@@ -232,6 +234,11 @@ def run_scan(
                         msg = f"Error processing {fentry.path}: {e}"
                         logger.error(msg)
                         result.errors.append(msg)
+
+                # Restore artist if new videos were added and artist was deleted
+                if artist_added_count > 0 and artist.deleted_at is not None:
+                    artist.deleted_at = None
+                    session.flush()
 
                 # Process subtitles for this artist folder
                 _process_subtitles(session, entry.path, video_map)

@@ -124,6 +124,7 @@ async def update_video(
 
 async def _cleanup_empty_artists(artist_ids: set[uuid.UUID], db: AsyncSession):
     """Soft-delete artists that have zero active videos remaining."""
+    await db.flush()  # ensure pending deletes are visible to count queries
     for artist_id in artist_ids:
         count_result = await db.execute(
             select(func.count(Video.id)).where(
@@ -139,25 +140,6 @@ async def _cleanup_empty_artists(artist_ids: set[uuid.UUID], db: AsyncSession):
             artist = artist_result.scalar_one_or_none()
             if artist:
                 artist.deleted_at = datetime.now(timezone.utc)
-
-
-@router.delete("/{video_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_video(
-    video_id: uuid.UUID,
-    _admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(
-        select(Video).where(Video.id == video_id, Video.deleted_at.is_(None))
-    )
-    video = result.scalar_one_or_none()
-    if not video:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
-
-    artist_id = video.artist_id
-    video.deleted_at = datetime.now(timezone.utc)
-    await _cleanup_empty_artists({artist_id}, db)
-    await db.commit()
 
 
 @router.post("/bulk-delete", status_code=status.HTTP_204_NO_CONTENT)
@@ -182,4 +164,23 @@ async def bulk_delete_videos(
         video.deleted_at = now
 
     await _cleanup_empty_artists(artist_ids, db)
+    await db.commit()
+
+
+@router.delete("/{video_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_video(
+    video_id: uuid.UUID,
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Video).where(Video.id == video_id, Video.deleted_at.is_(None))
+    )
+    video = result.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+
+    artist_id = video.artist_id
+    video.deleted_at = datetime.now(timezone.utc)
+    await _cleanup_empty_artists({artist_id}, db)
     await db.commit()
