@@ -26,6 +26,7 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(
         default=UserRole.user, server_default=UserRole.user.value
     )
+    image_path: Mapped[str | None] = mapped_column(String(1000))
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
