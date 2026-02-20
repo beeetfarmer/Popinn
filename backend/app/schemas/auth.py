@@ -42,6 +42,7 @@ class UserRead(BaseModel):
     id: uuid.UUID
     username: str
     email: str
+    image_url: str | None = None
     role: str
     is_active: bool
     created_at: datetime
