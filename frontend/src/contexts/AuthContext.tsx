@@ -12,6 +12,7 @@ interface User {
   id: string;
   username: string;
   email: string;
+  image_url?: string | null;
   role: string;
   is_active: boolean;
   created_at: string;
