@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { MusicVideo, Artist } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import PageTransition from "@/components/PageTransition";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -25,6 +26,8 @@ import { toast } from "sonner";
 const PER_PAGE = 12;
 
 export default function MusicVideosPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState("added_at");
@@ -34,7 +37,7 @@ export default function MusicVideosPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const { data: videos = [] } = useQuery<MusicVideo[]>({
+  const { data: videos = [], isLoading: videosLoading, isError: videosError } = useQuery<MusicVideo[]>({
     queryKey: ["videos"],
     queryFn: () => api.get("/videos/"),
   });
@@ -93,8 +96,10 @@ export default function MusicVideosPage() {
     [filtered, page]
   );
 
-  // Reset page when filters change
-  useMemo(() => setPage(1), [filterArtist, filterGenre, sortBy, sortOrder]);
+  // Reset page when filters/sort change.
+  useEffect(() => {
+    setPage(1);
+  }, [filterArtist, filterGenre, sortBy, sortOrder]);
 
   const bulkDelete = useMutation({
     mutationFn: () =>
@@ -138,11 +143,11 @@ export default function MusicVideosPage() {
           <h1 className="text-2xl font-bold text-foreground">Music Videos</h1>
           <span className="text-sm text-muted-foreground">({filtered.length})</span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            {!selectMode ? (
+            {isAdmin && !selectMode ? (
               <Button variant="outline" size="sm" onClick={() => setSelectMode(true)}>
                 <CheckSquare className="mr-1 h-4 w-4" /> Select
               </Button>
-            ) : (
+            ) : isAdmin ? (
               <>
                 <Button variant="outline" size="sm" onClick={toggleAll}>
                   {selected.size === visible.length ? (
@@ -168,7 +173,7 @@ export default function MusicVideosPage() {
                   <X className="h-4 w-4" />
                 </Button>
               </>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -222,10 +227,17 @@ export default function MusicVideosPage() {
         </div>
 
         {/* Video grid */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {videosLoading && (
+          <p className="py-8 text-center text-muted-foreground">Loading videos...</p>
+        )}
+        {videosError && (
+          <p className="py-8 text-center text-destructive">Failed to load videos</p>
+        )}
+        {!videosLoading && !videosError && (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {visible.map((v) => (
             <div key={v.id} className="relative">
-              {selectMode && (
+              {isAdmin && selectMode && (
                 <button
                   onClick={() => toggleSelect(v.id)}
                   className="absolute left-2 top-2 z-10 rounded bg-background/80 p-1"
@@ -237,13 +249,14 @@ export default function MusicVideosPage() {
                   )}
                 </button>
               )}
-              {selectMode && selected.has(v.id) && (
+              {isAdmin && selectMode && selected.has(v.id) && (
                 <div className="absolute inset-0 z-[5] rounded-lg ring-2 ring-primary pointer-events-none" />
               )}
               <VideoCard video={v} />
             </div>
           ))}
-        </div>
+          </div>
+        )}
 
         {filtered.length === 0 && (
           <p className="py-12 text-center text-muted-foreground">No videos match your filters</p>

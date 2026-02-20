@@ -16,6 +16,7 @@ export interface MusicVideo {
   duration_display: string;
   thumbnail_url: string | null;
   video_url: string | null;
+  playback_url: string | null;
   year: number | null;
   genre: string | null;
   file_size: number | null;

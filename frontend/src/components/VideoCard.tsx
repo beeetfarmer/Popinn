@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import type { MusicVideo } from "@/data/mockData";
 import { toast } from "sonner";
 
@@ -37,6 +38,8 @@ interface VideoCardProps {
 
 export default function VideoCard({ video }: VideoCardProps) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [menuOpen, setMenuOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editTitle, setEditTitle] = useState(video.title);
@@ -147,9 +150,11 @@ export default function VideoCard({ video }: VideoCardProps) {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem onClick={() => { setMenuOpen(false); setEditOpen(true); }}>
-                <Pencil className="mr-2 h-4 w-4" /> Edit
-              </DropdownMenuItem>
+              {isAdmin && (
+                <DropdownMenuItem onClick={() => { setMenuOpen(false); setEditOpen(true); }}>
+                  <Pencil className="mr-2 h-4 w-4" /> Edit
+                </DropdownMenuItem>
+              )}
 
               {watchlists.length > 0 ? (
                 <DropdownMenuSub>
@@ -177,24 +182,28 @@ export default function VideoCard({ video }: VideoCardProps) {
                 </DropdownMenuItem>
               )}
 
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => {
-                  if (confirm(`Delete "${video.title}"?`)) {
-                    deleteMutation.mutate();
-                  }
-                }}
-                className="text-destructive focus:text-destructive"
-              >
-                <Trash2 className="mr-2 h-4 w-4" /> Delete
-              </DropdownMenuItem>
+              {isAdmin && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => {
+                      if (confirm(`Delete "${video.title}"?`)) {
+                        deleteMutation.mutate();
+                      }
+                    }}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" /> Delete
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
 
       {/* Edit dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+      <Dialog open={editOpen && isAdmin} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Video</DialogTitle>

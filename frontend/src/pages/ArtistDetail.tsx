@@ -16,16 +16,30 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
+
+const PER_PAGE = 10;
+
+function getCookie(name: string): string | null {
+  const match = document.cookie
+    .split("; ")
+    .find((part) => part.startsWith(`${name}=`));
+  if (!match) return null;
+  return decodeURIComponent(match.split("=")[1] || "");
+}
 
 export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const queryClient = useQueryClient();
   const [dragOver, setDragOver] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState("");
   const [editBio, setEditBio] = useState("");
+  const [page, setPage] = useState(1);
 
-  const { data: artist } = useQuery<ArtistDetailType>({
+  const { data: artist, isLoading, isError } = useQuery<ArtistDetailType>({
     queryKey: ["artist", id],
     queryFn: () => api.get(`/artists/${id}`),
     enabled: !!id,
@@ -33,12 +47,14 @@ export default function ArtistDetail() {
 
   const uploadImage = useMutation({
     mutationFn: async (file: File) => {
+      if (!isAdmin) throw new Error("Admin access required");
       const formData = new FormData();
       formData.append("file", file);
-      const token = localStorage.getItem("access_token");
+      const csrf = getCookie("popinn_csrf_token");
       const res = await fetch(`/api/v1/artists/${id}/image`, {
         method: "PUT",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: csrf ? { "X-CSRF-Token": csrf } : {},
+        credentials: "include",
         body: formData,
       });
       if (!res.ok) {
@@ -57,6 +73,7 @@ export default function ArtistDetail() {
 
   const editMutation = useMutation({
     mutationFn: () => {
+      if (!isAdmin) throw new Error("Admin access required");
       const body: Record<string, unknown> = {};
       if (editName.trim() && editName.trim() !== artist?.name) body.name = editName.trim();
       if (editBio.trim() !== (artist?.bio || "")) body.bio = editBio.trim() || null;
@@ -103,8 +120,14 @@ export default function ArtistDetail() {
   );
 
   if (!artist) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    if (isLoading) return <p className="text-muted-foreground">Loading artist...</p>;
+    if (isError) return <p className="text-destructive">Failed to load artist</p>;
+    return <p className="text-muted-foreground">Artist not found</p>;
   }
+
+  const totalPages = Math.max(1, Math.ceil(artist.videos.length / PER_PAGE));
+  const start = (page - 1) * PER_PAGE;
+  const paginatedVideos = artist.videos.slice(start, start + PER_PAGE);
 
   return (
     <PageTransition>
@@ -127,12 +150,12 @@ export default function ArtistDetail() {
             }`}
             onDragOver={(e) => {
               e.preventDefault();
-              setDragOver(true);
+              if (isAdmin) setDragOver(true);
             }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
-            onClick={() => document.getElementById("artist-image-input")?.click()}
-            title="Drag & drop or click to change artist image"
+            onDragLeave={() => isAdmin && setDragOver(false)}
+            onDrop={isAdmin ? handleDrop : undefined}
+            onClick={isAdmin ? () => document.getElementById("artist-image-input")?.click() : undefined}
+            title={isAdmin ? "Drag & drop or click to change artist image" : "Artist image"}
           >
             <img
               src={artist.image_url || "/placeholder.svg"}
@@ -141,37 +164,43 @@ export default function ArtistDetail() {
                 dragOver || uploadImage.isPending ? "opacity-40" : ""
               }`}
             />
-            <div
-              className={`absolute inset-0 flex flex-col items-center justify-center transition-opacity ${
-                dragOver || uploadImage.isPending ? "opacity-100" : "opacity-0 hover:opacity-100"
-              }`}
-            >
-              <div className="rounded-full bg-background/80 p-2">
-                <Upload className="h-5 w-5 text-primary" />
-              </div>
-              <span className="mt-1 text-xs font-medium text-foreground">
-                {uploadImage.isPending ? "Uploading..." : "Change Image"}
-              </span>
-            </div>
-            <input
-              id="artist-image-input"
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
+            {isAdmin && (
+              <>
+                <div
+                  className={`absolute inset-0 flex flex-col items-center justify-center transition-opacity ${
+                    dragOver || uploadImage.isPending ? "opacity-100" : "opacity-0 hover:opacity-100"
+                  }`}
+                >
+                  <div className="rounded-full bg-background/80 p-2">
+                    <Upload className="h-5 w-5 text-primary" />
+                  </div>
+                  <span className="mt-1 text-xs font-medium text-foreground">
+                    {uploadImage.isPending ? "Uploading..." : "Change Image"}
+                  </span>
+                </div>
+                <input
+                  id="artist-image-input"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileSelect}
+                />
+              </>
+            )}
           </div>
 
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-3xl font-bold text-foreground">{artist.name}</h1>
-              <button
-                onClick={openEdit}
-                className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                title="Edit artist"
-              >
-                <Pencil className="h-4 w-4" />
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={openEdit}
+                  className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  title="Edit artist"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+              )}
             </div>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
               {artist.bio}
@@ -185,12 +214,35 @@ export default function ArtistDetail() {
         {/* Videos */}
         <h2 className="mb-4 mt-10 text-xl font-bold text-foreground">Music Videos</h2>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {artist.videos.map((v) => (
+          {paginatedVideos.map((v) => (
             <VideoCard key={v.id} video={v} />
           ))}
         </div>
+        {artist.videos.length > PER_PAGE && (
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page === 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Page {page} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Next
+            </Button>
+          </div>
+        )}
         {/* Edit dialog */}
-        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <Dialog open={editOpen && isAdmin} onOpenChange={setEditOpen}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Edit Artist</DialogTitle>
