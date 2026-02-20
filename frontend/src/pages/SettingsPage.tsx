@@ -32,6 +32,11 @@ interface ScanJob {
   message?: string;
 }
 
+interface RuntimeSettings {
+  media_path: string;
+  transcoding_enabled: boolean;
+}
+
 export default function SettingsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -44,8 +49,16 @@ export default function SettingsPage() {
   const [scanStatus, setScanStatus] = useState<ScanJob | null>(null);
   const [scanning, setScanning] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [mediaPath, setMediaPath] = useState("");
+  const [transcodingEnabled, setTranscodingEnabled] = useState(false);
 
   const isAdmin = user?.role === "admin";
+
+  const { data: runtimeSettings, isLoading: runtimeLoading } = useQuery<RuntimeSettings>({
+    queryKey: ["runtime-settings"],
+    queryFn: () => api.get("/settings/runtime"),
+    enabled: isAdmin,
+  });
 
   const { data: users = [] } = useQuery<UserItem[]>({
     queryKey: ["admin-users"],
@@ -60,6 +73,33 @@ export default function SettingsPage() {
       toast.success("User deleted");
     },
     onError: (err: any) => toast.error(err.message || "Failed to delete user"),
+  });
+
+  useEffect(() => {
+    if (!runtimeSettings) return;
+    setMediaPath(runtimeSettings.media_path);
+    setTranscodingEnabled(runtimeSettings.transcoding_enabled);
+  }, [runtimeSettings]);
+
+  const runtimeMutation = useMutation({
+    mutationFn: () =>
+      api.put<RuntimeSettings>("/settings/runtime", {
+        media_path: mediaPath,
+        transcoding_enabled: transcodingEnabled,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
+      toast.success("Runtime settings saved");
+    },
+    onError: (err: any) => toast.error(err.message || "Failed to save runtime settings"),
+  });
+
+  const regenerateThumbs = useMutation({
+    mutationFn: () => api.post<{ message: string; task_id: string }>("/settings/thumbnail-regenerate"),
+    onSuccess: (resp) => {
+      toast.success(`${resp.message} (task ${resp.task_id.slice(0, 8)})`);
+    },
+    onError: (err: any) => toast.error(err.message || "Failed to trigger thumbnail regeneration"),
   });
 
   const pollScanStatus = useCallback(async (jobId: string) => {
@@ -189,6 +229,51 @@ export default function SettingsPage() {
                   )}
                 </div>
               </div>
+            )}
+          </section>
+        )}
+
+        {isAdmin && (
+          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+            <h2 className="text-lg font-semibold text-foreground">Library Runtime Settings</h2>
+            {runtimeLoading ? (
+              <p className="text-sm text-muted-foreground">Loading runtime settings...</p>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="media-path">Media folder path</Label>
+                  <Input
+                    id="media-path"
+                    value={mediaPath}
+                    onChange={(e) => setMediaPath(e.target.value)}
+                    placeholder="/path/to/media"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="transcoding-enabled">Enable HLS transcoding</Label>
+                  <Switch
+                    id="transcoding-enabled"
+                    checked={transcodingEnabled}
+                    onCheckedChange={setTranscodingEnabled}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => runtimeMutation.mutate()}
+                    disabled={runtimeMutation.isPending || !mediaPath.trim()}
+                  >
+                    {runtimeMutation.isPending ? "Saving..." : "Save Runtime Settings"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => regenerateThumbs.mutate()}
+                    disabled={regenerateThumbs.isPending}
+                  >
+                    {regenerateThumbs.isPending ? "Starting..." : "Regenerate Thumbnails"}
+                  </Button>
+                </div>
+              </>
             )}
           </section>
         )}

@@ -40,11 +40,28 @@ export default function WatchlistDetail() {
   const removeVideoMutation = useMutation({
     mutationFn: (videoId: string) =>
       api.delete(`/watchlists/${id}/videos/${videoId}`),
+    onMutate: async (videoId: string) => {
+      await queryClient.cancelQueries({ queryKey: ["watchlist", id] });
+      const previous = queryClient.getQueryData<WatchlistDetailData>(["watchlist", id]);
+      if (previous) {
+        queryClient.setQueryData<WatchlistDetailData>(["watchlist", id], {
+          ...previous,
+          videos: previous.videos.filter((v) => v.id !== videoId),
+          item_count: Math.max(0, previous.item_count - 1),
+        });
+      }
+      return { previous };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["watchlist", id] });
       toast.success("Video removed");
     },
-    onError: () => toast.error("Failed to remove video"),
+    onError: (_error, _videoId, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["watchlist", id], context.previous);
+      }
+      toast.error("Failed to remove video");
+    },
   });
 
   const renameMutation = useMutation({

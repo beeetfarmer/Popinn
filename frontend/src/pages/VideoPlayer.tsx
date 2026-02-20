@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -18,6 +18,7 @@ export default function VideoPlayer() {
   const { id } = useParams<{ id: string }>();
   const [videoError, setVideoError] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null);
 
   const { data: video } = useQuery<MusicVideo>({
     queryKey: ["video", id],
@@ -30,6 +31,13 @@ export default function VideoPlayer() {
     queryFn: () => api.get(`/videos/${id}/subtitles`),
     enabled: !!id,
   });
+
+  useEffect(() => {
+    if (!video) return;
+    setSourceUrl(video.playback_url || video.video_url);
+    setVideoError(false);
+    setVideoLoading(true);
+  }, [video]);
 
   if (!video) {
     return <p className="text-muted-foreground">Loading...</p>;
@@ -44,7 +52,7 @@ export default function VideoPlayer() {
 
         {/* Player */}
         <div className="relative aspect-video overflow-hidden rounded-xl border border-border bg-card">
-          {video.video_url ? (
+          {sourceUrl ? (
             <>
               {videoLoading && !videoError && (
                 <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50">
@@ -58,7 +66,7 @@ export default function VideoPlayer() {
                 </div>
               ) : null}
               <video
-                src={video.video_url}
+                src={sourceUrl}
                 poster={video.thumbnail_url || undefined}
                 controls
                 autoPlay
@@ -66,6 +74,12 @@ export default function VideoPlayer() {
                 className="h-full w-full"
                 onLoadedData={() => setVideoLoading(false)}
                 onError={() => {
+                  if (sourceUrl !== video.video_url && video.video_url) {
+                    setSourceUrl(video.video_url);
+                    setVideoError(false);
+                    setVideoLoading(true);
+                    return;
+                  }
                   setVideoError(true);
                   setVideoLoading(false);
                 }}

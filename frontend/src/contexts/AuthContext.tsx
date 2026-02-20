@@ -42,26 +42,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const u = await api.get<User>("/auth/me");
       setUser(u);
     } catch {
-      api.clearTokens();
       setUser(null);
     }
   }, []);
 
   useEffect(() => {
-    if (api.getAccessToken()) {
-      fetchMe().finally(() => setIsLoading(false));
-    } else {
-      setIsLoading(false);
-    }
+    fetchMe().finally(() => setIsLoading(false));
   }, [fetchMe]);
 
   const login = useCallback(
     async (email: string, password: string) => {
-      const tokens = await api.post<TokenPair>("/auth/login", {
+      await api.post<TokenPair>("/auth/login", {
         email,
         password,
       });
-      api.setTokens(tokens.access_token, tokens.refresh_token);
       await fetchMe();
     },
     [fetchMe],
@@ -76,8 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    api.clearTokens();
-    setUser(null);
+    api.post("/auth/logout").finally(() => setUser(null));
   }, []);
 
   return (

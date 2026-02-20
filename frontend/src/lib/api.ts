@@ -1,47 +1,34 @@
 const API_BASE = "/api/v1";
+const REQUEST_TIMEOUT_MS = 15000;
 
 let refreshPromise: Promise<boolean> | null = null;
 
-function getAccessToken(): string | null {
-  return localStorage.getItem("access_token");
+function getCookie(name: string): string | null {
+  const match = document.cookie
+    .split("; ")
+    .find((part) => part.startsWith(`${name}=`));
+  if (!match) return null;
+  return decodeURIComponent(match.split("=")[1] || "");
 }
 
-function getRefreshToken(): string | null {
-  return localStorage.getItem("refresh_token");
-}
-
-function setTokens(access: string, refresh: string) {
-  localStorage.setItem("access_token", access);
-  localStorage.setItem("refresh_token", refresh);
-}
-
-function clearTokens() {
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("refresh_token");
+function getCsrfToken(): string | null {
+  return getCookie("popinn_csrf_token");
 }
 
 async function refreshTokens(): Promise<boolean> {
-  const refresh = getRefreshToken();
-  if (!refresh) return false;
-
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(`${API_BASE}/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refresh }),
+      credentials: "include",
+      signal: controller.signal,
     });
-
-    if (!res.ok) {
-      clearTokens();
-      return false;
-    }
-
-    const data = await res.json();
-    setTokens(data.access_token, data.refresh_token);
-    return true;
+    return res.ok;
   } catch {
-    clearTokens();
     return false;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
@@ -50,21 +37,39 @@ async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${API_BASE}${path}`;
-
   const headers = new Headers(options.headers);
   if (!headers.has("Content-Type") && options.body) {
     headers.set("Content-Type", "application/json");
   }
 
-  const token = getAccessToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
+  const method = (options.method || "GET").toUpperCase();
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    const csrf = getCsrfToken();
+    if (csrf) {
+      headers.set("X-CSRF-Token", csrf);
+    }
   }
 
-  let res = await fetch(url, { ...options, headers });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers,
+      credentials: "include",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    window.clearTimeout(timeoutId);
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError(0, "Request timed out. Please try again.");
+    }
+    throw error;
+  }
+  window.clearTimeout(timeoutId);
 
-  if (res.status === 401 && token) {
-    // Deduplicate concurrent refresh calls
+  if (res.status === 401) {
     if (!refreshPromise) {
       refreshPromise = refreshTokens().finally(() => {
         refreshPromise = null;
@@ -74,8 +79,27 @@ async function request<T>(
     const refreshed = await refreshPromise;
     if (refreshed) {
       const retryHeaders = new Headers(headers);
-      retryHeaders.set("Authorization", `Bearer ${getAccessToken()}`);
-      res = await fetch(url, { ...options, headers: retryHeaders });
+      const csrf = getCsrfToken();
+      if (csrf && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+        retryHeaders.set("X-CSRF-Token", csrf);
+      }
+      const retryController = new AbortController();
+      const retryTimeoutId = window.setTimeout(() => retryController.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        res = await fetch(url, {
+          ...options,
+          headers: retryHeaders,
+          credentials: "include",
+          signal: retryController.signal,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          throw new ApiError(0, "Request timed out. Please try again.");
+        }
+        throw error;
+      } finally {
+        window.clearTimeout(retryTimeoutId);
+      }
     }
   }
 
@@ -84,7 +108,6 @@ async function request<T>(
     throw new ApiError(res.status, body.detail || "Request failed");
   }
 
-  // Handle 204 No Content (e.g. DELETE responses)
   if (res.status === 204) {
     return undefined as T;
   }
@@ -120,7 +143,8 @@ export const api = {
       body: body ? JSON.stringify(body) : undefined,
     }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
-  setTokens,
-  clearTokens,
-  getAccessToken,
+  // Compatibility no-ops after switching to secure cookie auth.
+  setTokens: () => undefined,
+  clearTokens: () => undefined,
+  getAccessToken: () => null,
 };

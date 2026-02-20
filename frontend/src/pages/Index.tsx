@@ -9,12 +9,12 @@ import HeroCarousel from "@/components/HeroCarousel";
 import PageTransition from "@/components/PageTransition";
 
 export default function Index() {
-  const { data: videos = [] } = useQuery<MusicVideo[]>({
+  const { data: videos = [], isLoading: videosLoading, isError: videosError } = useQuery<MusicVideo[]>({
     queryKey: ["videos"],
     queryFn: () => api.get("/videos/"),
   });
 
-  const { data: artists = [] } = useQuery<Artist[]>({
+  const { data: artists = [], isLoading: artistsLoading, isError: artistsError } = useQuery<Artist[]>({
     queryKey: ["artists"],
     queryFn: () => api.get("/artists/"),
   });
@@ -30,6 +30,13 @@ export default function Index() {
   return (
     <PageTransition>
       <div className="space-y-10">
+        {(videosLoading || artistsLoading) && (
+          <p className="text-center text-muted-foreground">Loading library...</p>
+        )}
+        {(videosError || artistsError) && (
+          <p className="text-center text-destructive">Some content failed to load</p>
+        )}
+
         {/* Hero Carousel */}
         <HeroCarousel videos={videos} />
 
