@@ -5,14 +5,15 @@ from datetime import datetime, timezone
 from app.core.config import settings
 from app.core.database import get_sync_session_factory
 from app.models.system import ScanJob, ScanStatus
-from app.tasks.celery_app import celery_app
+from app.services.runtime_settings import (
+    get_effective_media_path_sync,
+)
 
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True)
-def run_library_scan(self, scan_job_id: str) -> dict:
-    """Run a full library scan as a Celery task."""
+def run_library_scan(scan_job_id: str) -> dict:
+    """Run a full library scan in-process."""
     from app.services.scanner import run_scan
 
     session_factory = get_sync_session_factory()
@@ -28,9 +29,12 @@ def run_library_scan(self, scan_job_id: str) -> dict:
         session.commit()
 
     try:
+        with session_factory() as session:
+            media_path = get_effective_media_path_sync(session)
+
         result = run_scan(
             session_factory=session_factory,
-            media_path=settings.MEDIA_PATH,
+            media_path=media_path,
             lastfm_api_key=settings.LASTFM_API_KEY,
             thumbnail_dir=settings.THUMBNAIL_DIR,
         )

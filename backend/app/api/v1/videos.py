@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -13,6 +14,12 @@ from app.models.artist import Artist
 from app.models.user import User
 from app.models.video import Video
 from app.schemas.video import VideoBulkDelete, VideoRead, VideoUpdate
+from app.services.background_jobs import submit_job
+from app.services.runtime_settings import (
+    get_effective_media_path,
+    get_effective_transcoding_enabled,
+)
+from app.tasks.media import generate_hls_for_video
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 
@@ -24,16 +31,33 @@ SORTABLE_COLUMNS = {
 }
 
 
-def _to_media_url(abs_path: str | None) -> str | None:
+def _to_media_url(abs_path: str | None, media_root: str) -> str | None:
     if not abs_path:
         return None
-    media = settings.MEDIA_PATH.rstrip("/")
-    if abs_path.startswith(media):
-        return "/media" + abs_path[len(media):]
-    return None
+    try:
+        rel = Path(abs_path).resolve(strict=False).relative_to(
+            Path(media_root).resolve(strict=False)
+        )
+    except ValueError:
+        return None
+    return f"/media/{rel.as_posix()}"
 
 
-def _video_to_read(video: Video, artist_name: str = "") -> VideoRead:
+def _hls_playlist_url(video_id: uuid.UUID, media_root: str) -> str | None:
+    playlist = Path(media_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
+    if not playlist.exists():
+        return None
+    return f"/media/{settings.HLS_DIR}/{video_id}/index.m3u8"
+
+
+def _video_to_read(
+    video: Video,
+    artist_name: str,
+    media_root: str,
+    transcoding_enabled: bool,
+) -> VideoRead:
+    video_url = _to_media_url(video.file_path, media_root)
+    hls_url = _hls_playlist_url(video.id, media_root) if transcoding_enabled else None
     return VideoRead(
         id=video.id,
         title=video.title,
@@ -41,8 +65,9 @@ def _video_to_read(video: Video, artist_name: str = "") -> VideoRead:
         artist_name=artist_name,
         album=video.album,
         duration=video.duration,
-        thumbnail_url=_to_media_url(video.thumbnail_path),
-        video_url=_to_media_url(video.file_path),
+        thumbnail_url=_to_media_url(video.thumbnail_path, media_root),
+        video_url=video_url,
+        playback_url=hls_url or video_url,
         year=video.year,
         genre=video.genre,
         file_size=video.file_size,
@@ -60,11 +85,7 @@ async def list_videos(
     sort_order: str = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ):
-    query = (
-        select(Video)
-        .where(Video.deleted_at.is_(None))
-        .options(selectinload(Video.artist))
-    )
+    query = select(Video).where(Video.deleted_at.is_(None)).options(selectinload(Video.artist))
 
     if search:
         query = query.where(Video.title.ilike(f"%{search}%"))
@@ -72,16 +93,17 @@ async def list_videos(
         query = query.where(Video.artist_id == artist_id)
 
     sort_col = SORTABLE_COLUMNS.get(sort_by, Video.added_at)
-    if sort_order == "asc":
-        query = query.order_by(sort_col.asc())
-    else:
-        query = query.order_by(sort_col.desc())
-
+    query = query.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
     query = query.offset(skip).limit(limit)
 
     result = await db.execute(query)
     videos = result.scalars().all()
-    return [_video_to_read(v, v.artist.name if v.artist else "") for v in videos]
+    media_root = await get_effective_media_path(db)
+    transcoding_enabled = await get_effective_transcoding_enabled(db)
+    return [
+        _video_to_read(v, v.artist.name if v.artist else "", media_root, transcoding_enabled)
+        for v in videos
+    ]
 
 
 @router.get("/{video_id}", response_model=VideoRead)
@@ -94,7 +116,10 @@ async def get_video(video_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     video = result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
-    return _video_to_read(video, video.artist.name if video.artist else "")
+
+    media_root = await get_effective_media_path(db)
+    transcoding_enabled = await get_effective_transcoding_enabled(db)
+    return _video_to_read(video, video.artist.name if video.artist else "", media_root, transcoding_enabled)
 
 
 @router.patch("/{video_id}", response_model=VideoRead)
@@ -119,7 +144,22 @@ async def update_video(
 
     await db.commit()
     await db.refresh(video, ["artist"])
-    return _video_to_read(video, video.artist.name if video.artist else "")
+    media_root = await get_effective_media_path(db)
+    transcoding_enabled = await get_effective_transcoding_enabled(db)
+    return _video_to_read(video, video.artist.name if video.artist else "", media_root, transcoding_enabled)
+
+
+@router.post("/{video_id}/hls", status_code=status.HTTP_202_ACCEPTED)
+async def queue_hls_generation(
+    video_id: uuid.UUID,
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    video = await db.scalar(select(Video).where(Video.id == video_id, Video.deleted_at.is_(None)))
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+    task_id = submit_job("hls_generation", generate_hls_for_video, str(video_id))
+    return {"message": "HLS generation queued", "task_id": task_id}
 
 
 async def _cleanup_empty_artists(artist_ids: set[uuid.UUID], db: AsyncSession):
@@ -127,15 +167,11 @@ async def _cleanup_empty_artists(artist_ids: set[uuid.UUID], db: AsyncSession):
     await db.flush()  # ensure pending deletes are visible to count queries
     for artist_id in artist_ids:
         count_result = await db.execute(
-            select(func.count(Video.id)).where(
-                Video.artist_id == artist_id, Video.deleted_at.is_(None)
-            )
+            select(func.count(Video.id)).where(Video.artist_id == artist_id, Video.deleted_at.is_(None))
         )
         if (count_result.scalar() or 0) == 0:
             artist_result = await db.execute(
-                select(Artist).where(
-                    Artist.id == artist_id, Artist.deleted_at.is_(None)
-                )
+                select(Artist).where(Artist.id == artist_id, Artist.deleted_at.is_(None))
             )
             artist = artist_result.scalar_one_or_none()
             if artist:
@@ -148,11 +184,7 @@ async def bulk_delete_videos(
     _admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Video).where(
-            Video.id.in_(body.video_ids), Video.deleted_at.is_(None)
-        )
-    )
+    result = await db.execute(select(Video).where(Video.id.in_(body.video_ids), Video.deleted_at.is_(None)))
     videos = result.scalars().all()
     if not videos:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No videos found")
@@ -173,9 +205,7 @@ async def delete_video(
     _admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Video).where(Video.id == video_id, Video.deleted_at.is_(None))
-    )
+    result = await db.execute(select(Video).where(Video.id == video_id, Video.deleted_at.is_(None)))
     video = result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")

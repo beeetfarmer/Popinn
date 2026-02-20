@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -20,20 +21,36 @@ from app.schemas.watchlist import (
     WatchlistRead,
     WatchlistUpdate,
 )
+from app.services.runtime_settings import (
+    get_effective_media_path,
+    get_effective_transcoding_enabled,
+)
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
 
-def _to_media_url(abs_path: str | None) -> str | None:
+def _to_media_url(abs_path: str | None, media_root: str) -> str | None:
     if not abs_path:
         return None
-    media = settings.MEDIA_PATH.rstrip("/")
-    if abs_path.startswith(media):
-        return "/media" + abs_path[len(media):]
-    return None
+    try:
+        rel = Path(abs_path).resolve(strict=False).relative_to(
+            Path(media_root).resolve(strict=False)
+        )
+    except ValueError:
+        return None
+    return f"/media/{rel.as_posix()}"
 
 
-def _video_to_read(video: Video) -> VideoRead:
+def _hls_playlist_url(video_id: uuid.UUID, media_root: str) -> str | None:
+    playlist = Path(media_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
+    if not playlist.exists():
+        return None
+    return f"/media/{settings.HLS_DIR}/{video_id}/index.m3u8"
+
+
+def _video_to_read(video: Video, media_root: str, transcoding_enabled: bool) -> VideoRead:
+    video_url = _to_media_url(video.file_path, media_root)
+    hls_url = _hls_playlist_url(video.id, media_root) if transcoding_enabled else None
     return VideoRead(
         id=video.id,
         title=video.title,
@@ -41,8 +58,9 @@ def _video_to_read(video: Video) -> VideoRead:
         artist_name=video.artist.name if video.artist else "",
         album=video.album,
         duration=video.duration,
-        thumbnail_url=_to_media_url(video.thumbnail_path),
-        video_url=_to_media_url(video.file_path),
+        thumbnail_url=_to_media_url(video.thumbnail_path, media_root),
+        video_url=video_url,
+        playback_url=hls_url or video_url,
         year=video.year,
         genre=video.genre,
         file_size=video.file_size,
@@ -117,15 +135,22 @@ async def get_watchlist(
     result = await db.execute(
         select(Watchlist)
         .where(Watchlist.id == watchlist_id, Watchlist.user_id == user.id)
-        .options(selectinload(Watchlist.items).selectinload(WatchlistItem.video).selectinload(Video.artist))
+        .options(
+            selectinload(Watchlist.items)
+            .selectinload(WatchlistItem.video)
+            .selectinload(Video.artist)
+        )
     )
     watchlist = result.scalar_one_or_none()
     if not watchlist:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found"
         )
+
+    media_root = await get_effective_media_path(db)
+    transcoding_enabled = await get_effective_transcoding_enabled(db)
     videos = [
-        _video_to_read(item.video)
+        _video_to_read(item.video, media_root, transcoding_enabled)
         for item in watchlist.items
         if item.video and item.video.deleted_at is None
     ]
@@ -188,7 +213,6 @@ async def add_video_to_watchlist(
 ):
     watchlist = await _get_user_watchlist(watchlist_id, user, db)
 
-    # Verify video exists
     result = await db.execute(
         select(Video).where(Video.id == body.video_id, Video.deleted_at.is_(None))
     )
@@ -208,7 +232,6 @@ async def add_video_to_watchlist(
             detail="Video already in watchlist",
         )
 
-    # Return updated watchlist with count
     count_result = await db.execute(
         select(func.count(WatchlistItem.id)).where(
             WatchlistItem.watchlist_id == watchlist.id

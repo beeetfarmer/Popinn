@@ -20,7 +20,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 def get_sync_session_factory() -> sessionmaker:
-    """Create a sync sessionmaker for use in Celery workers."""
+    """Create a sync sessionmaker for in-process background jobs."""
     sync_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
     sync_engine = create_engine(sync_url, echo=False)
     return sessionmaker(bind=sync_engine, expire_on_commit=False)

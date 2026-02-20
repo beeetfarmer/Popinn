@@ -1,11 +1,13 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.http_security import clear_auth_cookies, set_auth_cookies
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -26,12 +28,24 @@ from app.schemas.auth import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _issue_tokens_for_user(response: Response, user: User) -> TokenPair:
+    access_token = create_access_token(user.id, user.role.value)
+    refresh_token = create_refresh_token(user.id)
+    set_auth_cookies(response, access_token, refresh_token)
+    return TokenPair(
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
+
+
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
+async def register(
+    response: Response,
+    data: UserRegister,
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
-        select(User).where(
-            or_(User.username == data.username, User.email == data.email)
-        )
+        select(User).where(or_(User.username == data.username, User.email == data.email))
     )
     if result.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -53,11 +67,16 @@ async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    _issue_tokens_for_user(response, user)
     return user
 
 
 @router.post("/login", response_model=TokenPair)
-async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(
+    response: Response,
+    data: UserLogin,
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
@@ -73,15 +92,29 @@ async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
             detail="Account is disabled",
         )
 
-    return TokenPair(
-        access_token=create_access_token(user.id, user.role.value),
-        refresh_token=create_refresh_token(user.id),
-    )
+    return _issue_tokens_for_user(response, user)
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh(data: TokenRefresh, db: AsyncSession = Depends(get_db)):
-    payload = decode_token(data.refresh_token)
+async def refresh(
+    request: Request,
+    response: Response,
+    data: TokenRefresh | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    refresh_token = None
+    if data:
+        refresh_token = data.refresh_token
+    if not refresh_token:
+        refresh_token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing refresh token",
+        )
+
+    payload = decode_token(refresh_token)
 
     if payload is None or payload.get("type") != "refresh":
         raise HTTPException(
@@ -106,10 +139,12 @@ async def refresh(data: TokenRefresh, db: AsyncSession = Depends(get_db)):
             detail="User not found or inactive",
         )
 
-    return TokenPair(
-        access_token=create_access_token(user.id, user.role.value),
-        refresh_token=create_refresh_token(user.id),
-    )
+    return _issue_tokens_for_user(response, user)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(response: Response):
+    clear_auth_cookies(response)
 
 
 @router.get("/me", response_model=UserRead)

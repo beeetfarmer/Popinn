@@ -60,3 +60,48 @@ def generate_thumbnail(
     except Exception:
         logger.exception("Error generating thumbnail for %s", video_path)
         return False
+
+
+def generate_hls(video_path: str, output_dir: str) -> str | None:
+    """Generate a simple HLS stream (single variant) and return the playlist path."""
+    try:
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        playlist = out_dir / "index.m3u8"
+        segment_pattern = out_dir / "segment_%03d.ts"
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                video_path,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "23",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-hls_time",
+                "6",
+                "-hls_list_size",
+                "0",
+                "-hls_segment_filename",
+                str(segment_pattern),
+                "-f",
+                "hls",
+                "-y",
+                str(playlist),
+            ],
+            capture_output=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            logger.warning("ffmpeg HLS failed for %s: %s", video_path, result.stderr[:500])
+            return None
+        return str(playlist) if playlist.exists() else None
+    except Exception:
+        logger.exception("Error generating HLS for %s", video_path)
+        return None
