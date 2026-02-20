@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SettingRead(BaseModel):
@@ -13,3 +13,18 @@ class SettingRead(BaseModel):
 
 class SettingUpdate(BaseModel):
     value: str | None = None
+
+
+class RuntimeSettingsRead(BaseModel):
+    media_path: str
+    transcoding_enabled: bool
+
+
+class RuntimeSettingsUpdate(BaseModel):
+    media_path: str = Field(min_length=1)
+    transcoding_enabled: bool
+
+
+class ThumbnailRegenerateResponse(BaseModel):
+    message: str
+    task_id: str

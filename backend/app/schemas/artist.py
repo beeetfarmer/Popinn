@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.schemas.video import VideoRead
+
 
 class ArtistRead(BaseModel):
     id: uuid.UUID
@@ -16,9 +18,10 @@ class ArtistRead(BaseModel):
 
 
 class ArtistUpdate(BaseModel):
+    name: str | None = None
     bio: str | None = None
     image_url: str | None = None
 
 
 class ArtistDetailRead(ArtistRead):
-    videos: list = []
+    videos: list[VideoRead] = []

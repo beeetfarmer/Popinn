@@ -13,6 +13,7 @@ class VideoRead(BaseModel):
     duration: int | None = None
     thumbnail_url: str | None = None
     video_url: str | None = None
+    playback_url: str | None = None
     year: int | None = None
     genre: str | None = None
     file_size: int | None = None
