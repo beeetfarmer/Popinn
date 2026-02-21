@@ -60,6 +60,12 @@ async def request_context_and_security_headers(request: Request, call_next):
             rate_limiter.check("auth", request.client.host if request.client else "unknown", settings.RATE_LIMIT_AUTH)
         elif request.url.path == "/api/v1/scan/run":
             rate_limiter.check("scan", request.client.host if request.client else "unknown", settings.RATE_LIMIT_SCAN)
+        elif request.url.path == "/api/v1/videos/spotify/search":
+            rate_limiter.check(
+                "spotify_search",
+                request.client.host if request.client else "unknown",
+                settings.RATE_LIMIT_SPOTIFY_SEARCH,
+            )
 
         enforce_csrf_for_request(request)
     except HTTPException as exc:

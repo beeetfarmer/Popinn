@@ -30,7 +30,11 @@ from app.services.runtime_settings import (
     get_effective_transcoding_enabled,
     get_effective_view_threshold_ratio,
 )
-from app.services.spotify import search_tracks
+from app.services.spotify import (
+    SpotifyRateLimitError,
+    SpotifyServiceError,
+    search_tracks,
+)
 from app.tasks.media import generate_hls_for_video
 
 router = APIRouter(prefix="/videos", tags=["videos"])
@@ -141,10 +145,18 @@ async def search_spotify_tracks(
             artist_name=artist_name,
             limit=limit,
         )
-    except Exception as exc:
+    except SpotifyRateLimitError as exc:
+        detail = "Spotify API rate limit exceeded. Please wait and try again."
+        if exc.retry_after_seconds is not None:
+            detail += f" Retry after about {int(round(exc.retry_after_seconds))}s."
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=detail,
+        ) from exc
+    except SpotifyServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to fetch Spotify metadata: {exc}",
+            detail=str(exc),
         ) from exc
 
 

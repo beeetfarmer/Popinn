@@ -23,11 +23,17 @@ class Settings(BaseSettings):
     RATE_LIMIT_DEFAULT: str = "120/minute"
     RATE_LIMIT_AUTH: str = "10/minute"
     RATE_LIMIT_SCAN: str = "5/minute"
+    RATE_LIMIT_SPOTIFY_SEARCH: str = "45/minute"
+    SPOTIFY_API_RATE_LIMIT: str = "10/second"
+    LASTFM_API_RATE_LIMIT: str = "5/second"
+    EXTERNAL_API_MAX_RETRIES: int = 2
+    EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 0.5
     BACKGROUND_WORKERS: int = 2
     VIEW_THRESHOLD_RATIO: float = 0.2
 
     MEDIA_PATH: str = "/media"
     LASTFM_API_KEY: str = ""
+    LASTFM_CACHE_TTL_HOURS: int = 168
     SPOTIFY_CLIENT_ID: str = ""
     SPOTIFY_CLIENT_SECRET: str = ""
     THUMBNAIL_DIR: str = ".thumbnails"
