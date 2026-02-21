@@ -26,3 +26,14 @@ class ArtistUpdate(BaseModel):
 
 class ArtistDetailRead(ArtistRead):
     videos: list[VideoRead] = []
+
+
+class ArtistRecommendationRead(ArtistRead):
+    lastfm_match: float | None = None
+
+
+class ArtistRecommendationsPage(BaseModel):
+    items: list[ArtistRecommendationRead]
+    offset: int
+    limit: int
+    has_more: bool

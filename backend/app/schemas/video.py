@@ -70,3 +70,15 @@ class SpotifyTrackMatch(BaseModel):
     genre: str | None = None
     artist_name: str | None = None
     artist_names: list[str] = []
+
+
+class VideoRecommendationRead(BaseModel):
+    video: VideoRead
+    lastfm_match: float | None = None
+
+
+class VideoRecommendationsPage(BaseModel):
+    items: list[VideoRecommendationRead]
+    offset: int
+    limit: int
+    has_more: bool

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 from datetime import datetime, timezone
@@ -15,8 +16,15 @@ from app.models.artist import Artist
 from app.models.playback import VideoPlay
 from app.models.user import User
 from app.models.video import Video
-from app.schemas.artist import ArtistDetailRead, ArtistRead, ArtistUpdate
+from app.schemas.artist import (
+    ArtistDetailRead,
+    ArtistRead,
+    ArtistRecommendationRead,
+    ArtistRecommendationsPage,
+    ArtistUpdate,
+)
 from app.schemas.video import VideoRead
+from app.services.lastfm import fetch_similar_artists, normalize_for_match
 from app.services.runtime_settings import (
     get_effective_media_path,
     get_effective_transcoding_enabled,
@@ -145,6 +153,97 @@ async def get_artist(artist_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         play_count=play_count,
         created_at=artist.created_at,
         videos=[_video_to_read(v, artist.name, media_root, transcoding_enabled) for v in active_videos],
+    )
+
+
+@router.get("/{artist_id}/recommendations", response_model=ArtistRecommendationsPage)
+async def get_artist_recommendations(
+    artist_id: uuid.UUID,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(12, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    artist = await db.scalar(
+        select(Artist).where(Artist.id == artist_id, Artist.deleted_at.is_(None))
+    )
+    if not artist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
+
+    api_key = settings.LASTFM_API_KEY.strip()
+    if not api_key:
+        return ArtistRecommendationsPage(items=[], offset=offset, limit=limit, has_more=False)
+
+    fetch_limit = max(50, min(200, (offset + limit) * 4))
+    similar = await asyncio.to_thread(
+        fetch_similar_artists,
+        artist.name,
+        api_key,
+        limit=fetch_limit,
+    )
+    if not similar:
+        return ArtistRecommendationsPage(items=[], offset=offset, limit=limit, has_more=False)
+
+    library_artists = (
+        await db.execute(select(Artist).where(Artist.deleted_at.is_(None)))
+    ).scalars().all()
+    by_normalized_name: dict[str, Artist] = {}
+    for row in library_artists:
+        normalized = normalize_for_match(row.name)
+        if normalized and normalized not in by_normalized_name:
+            by_normalized_name[normalized] = row
+
+    matched: list[tuple[Artist, float | None]] = []
+    seen_ids: set[uuid.UUID] = set()
+    for rec in similar:
+        normalized = normalize_for_match(rec.get("name"))
+        if not normalized:
+            continue
+        matched_artist = by_normalized_name.get(normalized)
+        if not matched_artist:
+            continue
+        if matched_artist.id == artist.id or matched_artist.id in seen_ids:
+            continue
+        seen_ids.add(matched_artist.id)
+        matched.append((matched_artist, rec.get("match")))
+
+    total = len(matched)
+    page = matched[offset : offset + limit]
+    page_artist_ids = [row.id for row, _ in page]
+
+    video_count_map: dict[uuid.UUID, int] = {}
+    if page_artist_ids:
+        count_rows = (
+            await db.execute(
+                select(Video.artist_id, func.count(Video.id))
+                .where(
+                    Video.deleted_at.is_(None),
+                    Video.artist_id.in_(page_artist_ids),
+                )
+                .group_by(Video.artist_id)
+            )
+        ).all()
+        video_count_map = {artist_id: int(count) for artist_id, count in count_rows}
+
+    media_root = await get_effective_media_path(db)
+    items = [
+        ArtistRecommendationRead(
+            id=row.id,
+            name=row.name,
+            bio=row.bio,
+            image_url=_to_media_url(row.image_path, media_root, cache_bust=True),
+            video_count=video_count_map.get(row.id, 0),
+            play_count=0,
+            created_at=row.created_at,
+            lastfm_match=score,
+        )
+        for row, score in page
+    ]
+
+    return ArtistRecommendationsPage(
+        items=items,
+        offset=offset,
+        limit=limit,
+        has_more=offset + limit < total,
     )
 
 

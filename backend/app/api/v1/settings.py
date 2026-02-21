@@ -5,7 +5,7 @@ import os
 from sqlalchemy import and_, case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_admin
+from app.api.deps import get_current_admin, get_current_user
 from app.core.database import get_db
 from app.models.playback import VideoPlay
 from app.models.system import Setting
@@ -15,6 +15,7 @@ from app.schemas.settings import (
     PlaybackExportItem,
     RuntimeSettingsRead,
     RuntimeSettingsUpdate,
+    ViewThresholdRead,
     SettingExportItem,
     SettingRead,
     SettingsExportPayload,
@@ -123,6 +124,17 @@ async def update_runtime_settings(
     return RuntimeSettingsRead(
         media_path=body.media_path,
         transcoding_enabled=body.transcoding_enabled,
+        view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
+    )
+
+
+@router.get("/view-threshold", response_model=ViewThresholdRead)
+async def get_view_threshold(
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    threshold_ratio = await get_effective_view_threshold_ratio(db)
+    return ViewThresholdRead(
         view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
     )
 

@@ -1,6 +1,8 @@
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -16,6 +18,8 @@ from app.models.user import User
 from app.models.video import Video
 from app.schemas.video import (
     VideoBulkDelete,
+    VideoRecommendationRead,
+    VideoRecommendationsPage,
     VideoPlayCreate,
     VideoPlayRead,
     VideoPlayStats,
@@ -24,6 +28,7 @@ from app.schemas.video import (
     VideoUpdate,
 )
 from app.services.background_jobs import submit_job
+from app.services.lastfm import fetch_similar_tracks, normalize_for_match
 from app.services.playback import is_counted_view
 from app.services.runtime_settings import (
     get_effective_media_path,
@@ -158,6 +163,135 @@ async def search_spotify_tracks(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+
+
+@router.get("/{video_id}/recommendations", response_model=VideoRecommendationsPage)
+async def get_video_recommendations(
+    video_id: uuid.UUID,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(12, ge=1, le=50),
+    source: Literal["lastfm", "genre"] = Query("lastfm"),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Video)
+        .where(Video.id == video_id, Video.deleted_at.is_(None))
+        .options(selectinload(Video.artist))
+    )
+    video = result.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+
+    matched: list[tuple[Video, float | None]] = []
+    if source == "genre":
+        genre_value = (video.genre or "").strip().lower()
+        if genre_value:
+            same_genre_rows = (
+                await db.execute(
+                    select(Video)
+                    .where(
+                        Video.deleted_at.is_(None),
+                        Video.id != video.id,
+                        Video.genre.is_not(None),
+                        func.lower(func.trim(Video.genre)) == genre_value,
+                    )
+                    .order_by(func.random())
+                    .options(selectinload(Video.artist))
+                )
+            ).scalars().all()
+            matched = [(row, None) for row in same_genre_rows]
+    else:
+        api_key = settings.LASTFM_API_KEY.strip()
+        if api_key:
+            artist_name = video.artist.name if video.artist else ""
+            fetch_limit = max(50, min(200, (offset + limit) * 4))
+            similar = await asyncio.to_thread(
+                fetch_similar_tracks,
+                video.title,
+                artist_name,
+                api_key,
+                limit=fetch_limit,
+            )
+            if similar:
+                artist_rows = (
+                    await db.execute(select(Artist).where(Artist.deleted_at.is_(None)))
+                ).scalars().all()
+                artist_ids_by_normalized: dict[str, list[uuid.UUID]] = {}
+                for row in artist_rows:
+                    normalized = normalize_for_match(row.name)
+                    if not normalized:
+                        continue
+                    artist_ids_by_normalized.setdefault(normalized, []).append(row.id)
+
+                candidate_order: list[tuple[uuid.UUID, str]] = []
+                candidate_score: dict[tuple[uuid.UUID, str], float | None] = {}
+                candidate_artist_ids: set[uuid.UUID] = set()
+                for rec in similar:
+                    normalized_artist = normalize_for_match(rec.get("artist_name"))
+                    normalized_title = normalize_for_match(rec.get("title"))
+                    if not normalized_artist or not normalized_title:
+                        continue
+                    artist_ids = artist_ids_by_normalized.get(normalized_artist)
+                    if not artist_ids:
+                        continue
+                    for artist_id in artist_ids:
+                        key = (artist_id, normalized_title)
+                        if key not in candidate_score:
+                            candidate_order.append(key)
+                            candidate_score[key] = rec.get("match")
+                        candidate_artist_ids.add(artist_id)
+
+                if candidate_artist_ids:
+                    candidate_videos = (
+                        await db.execute(
+                            select(Video)
+                            .where(
+                                Video.deleted_at.is_(None),
+                                Video.artist_id.in_(candidate_artist_ids),
+                            )
+                            .options(selectinload(Video.artist))
+                        )
+                    ).scalars().all()
+                    videos_by_key: dict[tuple[uuid.UUID, str], Video] = {}
+                    for row in candidate_videos:
+                        key = (row.artist_id, normalize_for_match(row.title))
+                        if key not in videos_by_key:
+                            videos_by_key[key] = row
+
+                    seen_video_ids: set[uuid.UUID] = set()
+                    for key in candidate_order:
+                        matched_video = videos_by_key.get(key)
+                        if not matched_video:
+                            continue
+                        if matched_video.id == video.id or matched_video.id in seen_video_ids:
+                            continue
+                        seen_video_ids.add(matched_video.id)
+                        matched.append((matched_video, candidate_score.get(key)))
+
+    total = len(matched)
+    page = matched[offset : offset + limit]
+    media_root = await get_effective_media_path(db)
+    transcoding_enabled = await get_effective_transcoding_enabled(db)
+
+    items = [
+        VideoRecommendationRead(
+            video=_video_to_read(
+                row,
+                row.artist.name if row.artist else "",
+                media_root,
+                transcoding_enabled,
+            ),
+            lastfm_match=score,
+        )
+        for row, score in page
+    ]
+    return VideoRecommendationsPage(
+        items=items,
+        offset=offset,
+        limit=limit,
+        has_more=offset + limit < total,
+    )
 
 
 @router.get("/{video_id}", response_model=VideoRead)
