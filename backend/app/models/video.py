@@ -38,6 +38,9 @@ class Video(Base):
     watchlist_items: Mapped[list["WatchlistItem"]] = relationship(  # noqa: F821
         back_populates="video"
     )
+    plays: Mapped[list["VideoPlay"]] = relationship(  # noqa: F821
+        back_populates="video"
+    )
 
     __table_args__ = (
         Index("ix_videos_title", "title"),

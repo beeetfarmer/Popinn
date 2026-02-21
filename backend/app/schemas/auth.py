@@ -46,3 +46,14 @@ class UserRead(BaseModel):
     role: str
     is_active: bool
     created_at: datetime
+
+
+class UserPlaybackRead(BaseModel):
+    id: uuid.UUID
+    video_id: uuid.UUID
+    video_title: str
+    artist_id: uuid.UUID
+    artist_name: str
+    watched_seconds: int
+    counted_play: bool
+    played_at: datetime
