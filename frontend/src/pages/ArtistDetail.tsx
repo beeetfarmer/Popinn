@@ -21,6 +21,31 @@ import { useQueue } from "@/contexts/QueueContext";
 
 const PER_PAGE = 10;
 
+interface SpotifyTrackMatch {
+  spotify_track_id: string;
+  title: string;
+  album: string | null;
+  year: number | null;
+  genre: string | null;
+  artist_name: string | null;
+  artist_names: string[];
+}
+
+interface MetadataRow {
+  videoId: string;
+  originalTitle: string;
+  originalAlbum: string;
+  originalYear: string;
+  originalGenre: string;
+  title: string;
+  album: string;
+  year: string;
+  genre: string;
+  spotifyQuery: string;
+  spotifySearching: boolean;
+  spotifyResults: SpotifyTrackMatch[];
+}
+
 function getCookie(name: string): string | null {
   const match = document.cookie
     .split("; ")
@@ -40,6 +65,9 @@ export default function ArtistDetail() {
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState("");
   const [editBio, setEditBio] = useState("");
+  const [metadataOpen, setMetadataOpen] = useState(false);
+  const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
+  const [metadataSaving, setMetadataSaving] = useState(false);
   const [page, setPage] = useState(1);
 
   const { data: artist, isLoading, isError } = useQuery<ArtistDetailType>({
@@ -96,6 +124,142 @@ export default function ArtistDetail() {
       setEditName(artist.name);
       setEditBio(artist.bio || "");
       setEditOpen(true);
+    }
+  }
+
+  function openMetadataEditor() {
+    if (!artist) return;
+    setMetadataRows(
+      artist.videos.map((video) => ({
+        videoId: video.id,
+        originalTitle: video.title,
+        originalAlbum: video.album || "",
+        originalYear: video.year ? String(video.year) : "",
+        originalGenre: video.genre || "",
+        title: video.title,
+        album: video.album || "",
+        year: video.year ? String(video.year) : "",
+        genre: video.genre || "",
+        spotifyQuery: video.title,
+        spotifySearching: false,
+        spotifyResults: [],
+      }))
+    );
+    setMetadataOpen(true);
+  }
+
+  function updateMetadataRow(
+    videoId: string,
+    field: "title" | "album" | "year" | "genre" | "spotifyQuery",
+    value: string
+  ) {
+    setMetadataRows((prev) =>
+      prev.map((row) =>
+        row.videoId === videoId
+          ? { ...row, [field]: value }
+          : row
+      )
+    );
+  }
+
+  async function searchSpotifyForRow(videoId: string) {
+    const row = metadataRows.find((item) => item.videoId === videoId);
+    if (!row) return;
+    const query = row.spotifyQuery.trim() || row.title.trim();
+    if (!query) {
+      toast.error("Enter a track name to search Spotify");
+      return;
+    }
+
+    setMetadataRows((prev) =>
+      prev.map((item) =>
+        item.videoId === videoId ? { ...item, spotifySearching: true } : item
+      )
+    );
+    try {
+      const results = await api.get<SpotifyTrackMatch[]>(
+        `/videos/spotify/search?q=${encodeURIComponent(query)}&artist_name=${encodeURIComponent(artist.name)}&limit=8`
+      );
+      setMetadataRows((prev) =>
+        prev.map((item) =>
+          item.videoId === videoId
+            ? { ...item, spotifySearching: false, spotifyResults: results }
+            : item
+        )
+      );
+      if (results.length === 0) {
+        toast.info(`No Spotify matches for "${query}"`);
+      }
+    } catch (err: any) {
+      setMetadataRows((prev) =>
+        prev.map((item) =>
+          item.videoId === videoId
+            ? { ...item, spotifySearching: false }
+            : item
+        )
+      );
+      toast.error(err.message || "Failed to search Spotify");
+    }
+  }
+
+  function applySpotifyMatch(videoId: string, match: SpotifyTrackMatch) {
+    setMetadataRows((prev) =>
+      prev.map((item) =>
+        item.videoId === videoId
+          ? {
+              ...item,
+              title: match.title || item.title,
+              album: match.album || "",
+              year: match.year ? String(match.year) : "",
+              genre: match.genre || "",
+              spotifyQuery: match.title || item.spotifyQuery,
+            }
+          : item
+      )
+    );
+    toast.success("Metadata fetched from Spotify");
+  }
+
+  async function saveMetadataChanges() {
+    if (!artist) return;
+    const updates = metadataRows
+      .map((row) => {
+        const body: Record<string, unknown> = {};
+        if (row.title.trim() !== row.originalTitle) body.title = row.title.trim();
+        if (row.album.trim() !== row.originalAlbum) body.album = row.album.trim() || null;
+        if (row.genre.trim() !== row.originalGenre) body.genre = row.genre.trim() || null;
+        if (row.year.trim() !== row.originalYear) {
+          if (!row.year.trim()) {
+            body.year = null;
+          } else {
+            const parsedYear = parseInt(row.year.trim(), 10);
+            body.year = Number.isNaN(parsedYear) ? null : parsedYear;
+          }
+        }
+        return { videoId: row.videoId, body };
+      })
+      .filter((item) => Object.keys(item.body).length > 0);
+
+    if (updates.length === 0) {
+      toast.info("No metadata changes to save");
+      return;
+    }
+
+    setMetadataSaving(true);
+    try {
+      await Promise.all(
+        updates.map((item) => api.patch(`/videos/${item.videoId}`, item.body))
+      );
+      queryClient.invalidateQueries({ queryKey: ["artist", id] });
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      queryClient.invalidateQueries({ queryKey: ["videos"] });
+      queryClient.invalidateQueries({ queryKey: ["search-videos"] });
+      setMetadataOpen(false);
+      toast.success(`Updated ${updates.length} music video${updates.length !== 1 ? "s" : ""}`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save music video metadata");
+    } finally {
+      setMetadataSaving(false);
     }
   }
 
@@ -224,7 +388,7 @@ export default function ArtistDetail() {
               {artist.videos.length} music video{artist.videos.length !== 1 && "s"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {artist.play_count || 0} counted play{(artist.play_count || 0) !== 1 && "s"}
+              {artist.play_count || 0} view{(artist.play_count || 0) !== 1 && "s"}
             </p>
             <div className="mt-3 flex gap-2">
               <Button size="sm" variant="outline" onClick={() => startArtistQueue(false)}>
@@ -233,6 +397,11 @@ export default function ArtistDetail() {
               <Button size="sm" variant="outline" onClick={() => startArtistQueue(true)}>
                 <Shuffle className="mr-1 h-4 w-4" /> Shuffle
               </Button>
+              {isAdmin && (
+                <Button size="sm" variant="secondary" onClick={openMetadataEditor}>
+                  Edit MV Metadata
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -295,6 +464,99 @@ export default function ArtistDetail() {
                 {editMutation.isPending ? "Saving..." : "Save Changes"}
               </Button>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={metadataOpen && isAdmin} onOpenChange={setMetadataOpen}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>Edit MV Metadata</DialogTitle>
+            </DialogHeader>
+            {metadataRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No music videos for this artist.</p>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Match each music video with a Spotify track to autofill title, album, release year, and genre.
+                </p>
+                <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
+                  {metadataRows.map((row) => (
+                    <div key={row.videoId} className="rounded-lg border border-border p-3">
+                      <p className="text-xs text-muted-foreground">
+                        Original MV Name: <span className="font-medium text-foreground">{row.originalTitle}</span>
+                      </p>
+                      <div className="mt-2 flex gap-2">
+                        <Input
+                          value={row.spotifyQuery}
+                          onChange={(e) => updateMetadataRow(row.videoId, "spotifyQuery", e.target.value)}
+                          placeholder="Search Spotify track..."
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => searchSpotifyForRow(row.videoId)}
+                          disabled={row.spotifySearching}
+                        >
+                          {row.spotifySearching ? "Searching..." : "Search"}
+                        </Button>
+                      </div>
+                      {row.spotifyResults.length > 0 && (
+                        <div className="mt-2 max-h-36 space-y-1 overflow-y-auto pr-1">
+                          {row.spotifyResults.map((item) => (
+                            <button
+                              key={item.spotify_track_id}
+                              type="button"
+                              onClick={() => applySpotifyMatch(row.videoId, item)}
+                              className="w-full rounded-md border border-border px-2 py-1.5 text-left transition-colors hover:bg-secondary"
+                            >
+                              <p className="truncate text-xs font-semibold text-foreground">{item.title}</p>
+                              <p className="truncate text-[11px] text-muted-foreground">
+                                {(item.artist_names && item.artist_names.length > 0 ? item.artist_names.join(", ") : item.artist_name) || "Unknown artist"}
+                                {item.album ? ` · ${item.album}` : ""}
+                                {item.year ? ` · ${item.year}` : ""}
+                              </p>
+                              {item.genre && (
+                                <p className="truncate text-[11px] text-muted-foreground">Genre: {item.genre}</p>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <Input
+                          value={row.title}
+                          onChange={(e) => updateMetadataRow(row.videoId, "title", e.target.value)}
+                          placeholder="Title"
+                        />
+                        <Input
+                          value={row.album}
+                          onChange={(e) => updateMetadataRow(row.videoId, "album", e.target.value)}
+                          placeholder="Album"
+                        />
+                        <Input
+                          type="number"
+                          value={row.year}
+                          onChange={(e) => updateMetadataRow(row.videoId, "year", e.target.value)}
+                          placeholder="Release Year"
+                        />
+                        <Input
+                          value={row.genre}
+                          onChange={(e) => updateMetadataRow(row.videoId, "genre", e.target.value)}
+                          placeholder="Genre"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  onClick={saveMetadataChanges}
+                  disabled={metadataSaving}
+                  className="w-full"
+                >
+                  {metadataSaving ? "Saving..." : "Save Metadata"}
+                </Button>
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       </div>

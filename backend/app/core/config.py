@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+ROOT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 
 class Settings(BaseSettings):
@@ -20,13 +24,20 @@ class Settings(BaseSettings):
     RATE_LIMIT_AUTH: str = "10/minute"
     RATE_LIMIT_SCAN: str = "5/minute"
     BACKGROUND_WORKERS: int = 2
+    VIEW_THRESHOLD_RATIO: float = 0.2
 
     MEDIA_PATH: str = "/media"
     LASTFM_API_KEY: str = ""
+    SPOTIFY_CLIENT_ID: str = ""
+    SPOTIFY_CLIENT_SECRET: str = ""
     THUMBNAIL_DIR: str = ".thumbnails"
     HLS_DIR: str = ".hls"
 
-    model_config = {"env_file": ".env", "case_sensitive": True}
+    model_config = {
+        "env_file": str(ROOT_ENV_FILE),
+        "case_sensitive": True,
+        "extra": "ignore",
+    }
 
     @property
     def allowed_origins(self) -> list[str]:

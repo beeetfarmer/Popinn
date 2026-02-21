@@ -4,6 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import PageTransition from "@/components/PageTransition";
@@ -37,6 +38,7 @@ interface ScanJob {
 interface RuntimeSettings {
   media_path: string;
   transcoding_enabled: boolean;
+  view_threshold_percent: number;
 }
 
 interface ExportSettingItem {
@@ -90,6 +92,7 @@ export default function SettingsPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [mediaPath, setMediaPath] = useState("");
   const [transcodingEnabled, setTranscodingEnabled] = useState(false);
+  const [viewThresholdPercent, setViewThresholdPercent] = useState(20);
 
   const isAdmin = user?.role === "admin";
 
@@ -118,6 +121,7 @@ export default function SettingsPage() {
     if (!runtimeSettings) return;
     setMediaPath(runtimeSettings.media_path);
     setTranscodingEnabled(runtimeSettings.transcoding_enabled);
+    setViewThresholdPercent(runtimeSettings.view_threshold_percent);
   }, [runtimeSettings]);
 
   const runtimeMutation = useMutation({
@@ -125,6 +129,7 @@ export default function SettingsPage() {
       api.put<RuntimeSettings>("/settings/runtime", {
         media_path: mediaPath,
         transcoding_enabled: transcodingEnabled,
+        view_threshold_percent: viewThresholdPercent,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
@@ -380,6 +385,23 @@ export default function SettingsPage() {
                     checked={transcodingEnabled}
                     onCheckedChange={setTranscodingEnabled}
                   />
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="view-threshold">View threshold</Label>
+                    <span className="text-sm font-medium text-foreground">{viewThresholdPercent}%</span>
+                  </div>
+                  <Slider
+                    id="view-threshold"
+                    value={[viewThresholdPercent]}
+                    min={1}
+                    max={100}
+                    step={1}
+                    onValueChange={(value) => setViewThresholdPercent(value[0] ?? 20)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    A playback counts as a view after this watch percentage. Playback history still records every session.
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   <Button

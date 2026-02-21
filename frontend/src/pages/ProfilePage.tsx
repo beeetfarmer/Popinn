@@ -49,7 +49,7 @@ interface PlaybackHistoryItem {
 
 type StatsRangePreset = "7d" | "30d" | "90d" | "custom";
 type StatsGranularity = "daily" | "weekly";
-type TopArtistMetric = "counted_plays" | "minutes";
+type TopArtistMetric = "views" | "minutes";
 
 function getCookie(name: string): string | null {
   const match = document.cookie
@@ -123,7 +123,7 @@ function shortDate(date: Date): string {
 }
 
 const playsChartConfig = {
-  plays: { label: "Plays", color: "hsl(var(--primary))" },
+  views: { label: "Views", color: "hsl(var(--primary))" },
 } satisfies ChartConfig;
 
 const watchChartConfig = {
@@ -131,7 +131,7 @@ const watchChartConfig = {
 } satisfies ChartConfig;
 
 const rankingChartConfig = {
-  plays: { label: "Plays", color: "#3b82f6" },
+  views: { label: "Views", color: "#3b82f6" },
 } satisfies ChartConfig;
 
 export default function ProfilePage() {
@@ -148,7 +148,7 @@ export default function ProfilePage() {
   const [historyEndDate, setHistoryEndDate] = useState("");
   const [statsPreset, setStatsPreset] = useState<StatsRangePreset>("30d");
   const [statsGranularity, setStatsGranularity] = useState<StatsGranularity>("daily");
-  const [topArtistMetric, setTopArtistMetric] = useState<TopArtistMetric>("counted_plays");
+  const [topArtistMetric, setTopArtistMetric] = useState<TopArtistMetric>("views");
   const [statsStart, setStatsStart] = useState(() => toDateInputValue(addDays(new Date(), -29)));
   const [statsEnd, setStatsEnd] = useState(() => toDateInputValue(new Date()));
 
@@ -205,7 +205,7 @@ export default function ProfilePage() {
   const trendData = useMemo(() => {
     const bucketMap = new Map<
       string,
-      { key: string; label: string; bucketDate: Date; plays: number; watch_seconds: number }
+      { key: string; label: string; bucketDate: Date; views: number; watch_seconds: number }
     >();
 
     let cursor = statsGranularity === "daily" ? startOfDay(statsRange.start) : getWeekStart(statsRange.start);
@@ -215,7 +215,7 @@ export default function ProfilePage() {
     while (cursor <= rangeEnd) {
       const key = toDateInputValue(cursor);
       const label = statsGranularity === "daily" ? shortDate(cursor) : `Wk ${shortDate(cursor)}`;
-      bucketMap.set(key, { key, label, bucketDate: new Date(cursor), plays: 0, watch_seconds: 0 });
+      bucketMap.set(key, { key, label, bucketDate: new Date(cursor), views: 0, watch_seconds: 0 });
       cursor = addDays(cursor, stepDays);
     }
 
@@ -224,7 +224,7 @@ export default function ProfilePage() {
       const key = toDateInputValue(bucketDate);
       const existing = bucketMap.get(key);
       if (!existing) return;
-      existing.plays += 1;
+      existing.views += entry.counted_play ? 1 : 0;
       existing.watch_seconds += entry.watched_seconds;
     });
 
@@ -232,23 +232,23 @@ export default function ProfilePage() {
       .sort((a, b) => a.bucketDate.getTime() - b.bucketDate.getTime())
       .map((bucket) => ({
         label: bucket.label,
-        plays: bucket.plays,
+        views: bucket.views,
         watch_minutes: Number((bucket.watch_seconds / 60).toFixed(1)),
       }));
   }, [statsHistory, statsGranularity, statsRange]);
 
   const topArtists = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; counted_plays: number; watch_seconds: number }>();
+    const map = new Map<string, { id: string; name: string; views: number; watch_seconds: number }>();
     statsHistory.forEach((entry) => {
       const existing = map.get(entry.artist_id);
       if (existing) {
-        existing.counted_plays += entry.counted_play ? 1 : 0;
+        existing.views += entry.counted_play ? 1 : 0;
         existing.watch_seconds += entry.watched_seconds;
       } else {
         map.set(entry.artist_id, {
           id: entry.artist_id,
           name: entry.artist_name,
-          counted_plays: entry.counted_play ? 1 : 0,
+          views: entry.counted_play ? 1 : 0,
           watch_seconds: entry.watched_seconds,
         });
       }
@@ -256,14 +256,14 @@ export default function ProfilePage() {
     const artists = Array.from(map.values());
     const ranked = artists
       .filter((artist) =>
-        topArtistMetric === "counted_plays"
-          ? artist.counted_plays > 0
+        topArtistMetric === "views"
+          ? artist.views > 0
           : artist.watch_seconds > 0
       )
       .sort((a, b) =>
-        topArtistMetric === "counted_plays"
-          ? b.counted_plays - a.counted_plays || b.watch_seconds - a.watch_seconds
-          : b.watch_seconds - a.watch_seconds || b.counted_plays - a.counted_plays
+        topArtistMetric === "views"
+          ? b.views - a.views || b.watch_seconds - a.watch_seconds
+          : b.watch_seconds - a.watch_seconds || b.views - a.views
       );
     return ranked.slice(0, 6);
   }, [statsHistory, topArtistMetric]);
@@ -285,27 +285,28 @@ export default function ProfilePage() {
   }, [topArtists, topArtistDetails]);
 
   const topVideos = useMemo(() => {
-    const map = new Map<string, { title: string; plays: number; watch_seconds: number }>();
+    const map = new Map<string, { title: string; views: number; watch_seconds: number }>();
     statsHistory.forEach((entry) => {
       const existing = map.get(entry.video_id);
       if (existing) {
-        existing.plays += 1;
+        existing.views += entry.counted_play ? 1 : 0;
         existing.watch_seconds += entry.watched_seconds;
       } else {
         map.set(entry.video_id, {
           title: entry.video_title,
-          plays: 1,
+          views: entry.counted_play ? 1 : 0,
           watch_seconds: entry.watched_seconds,
         });
       }
     });
     return Array.from(map.values())
-      .sort((a, b) => b.plays - a.plays || b.watch_seconds - a.watch_seconds)
+      .filter((video) => video.views > 0)
+      .sort((a, b) => b.views - a.views || b.watch_seconds - a.watch_seconds)
       .slice(0, 6);
   }, [statsHistory]);
 
   const topVideoChartData = useMemo(
-    () => topVideos.map((video) => ({ label: video.title, plays: video.plays })),
+    () => topVideos.map((video) => ({ label: video.title, views: video.views })),
     [topVideos]
   );
 
@@ -314,7 +315,10 @@ export default function ProfilePage() {
     [statsHistory]
   );
 
-  const totalPlays = statsHistory.length;
+  const totalViews = useMemo(
+    () => statsHistory.reduce((sum, item) => sum + (item.counted_play ? 1 : 0), 0),
+    [statsHistory]
+  );
 
   const historyArtists = useMemo(() => {
     const map = new Map<string, string>();
@@ -598,10 +602,10 @@ export default function ProfilePage() {
                 </div>
               </div>
               <div className="rounded-xl border border-border bg-card p-4">
-                <p className="text-xs text-muted-foreground">Number of Plays</p>
+                <p className="text-xs text-muted-foreground">Number of Views</p>
                 <div className="mt-2 flex items-center gap-2">
                   <PlayCircle className="h-4 w-4 text-primary" />
-                  <p className="text-lg font-semibold text-foreground">{totalPlays}</p>
+                  <p className="text-lg font-semibold text-foreground">{totalViews}</p>
                 </div>
               </div>
               <div className="rounded-xl border border-border bg-card p-4">
@@ -610,8 +614,8 @@ export default function ProfilePage() {
                   <Radio className="h-4 w-4 text-primary" />
                   <p className="truncate text-sm font-semibold text-foreground">
                     {topArtists[0]
-                      ? topArtistMetric === "counted_plays"
-                        ? `${topArtists[0].name} (${topArtists[0].counted_plays} counted plays)`
+                      ? topArtistMetric === "views"
+                        ? `${topArtists[0].name} (${topArtists[0].views} view${topArtists[0].views !== 1 ? "s" : ""})`
                         : `${topArtists[0].name} (${formatWatchTime(topArtists[0].watch_seconds)})`
                       : "No data"}
                   </p>
@@ -622,7 +626,7 @@ export default function ProfilePage() {
                 <div className="mt-2 flex items-center gap-2">
                   <Music2 className="h-4 w-4 text-primary" />
                   <p className="truncate text-sm font-semibold text-foreground">
-                    {topVideos[0] ? `${topVideos[0].title} (${topVideos[0].plays})` : "No data"}
+                    {topVideos[0] ? `${topVideos[0].title} (${topVideos[0].views})` : "No data"}
                   </p>
                 </div>
               </div>
@@ -631,7 +635,7 @@ export default function ProfilePage() {
             <section className="grid gap-3 lg:grid-cols-2">
               <div className="rounded-xl border border-border bg-card p-4">
                 <h3 className="mb-2 text-sm font-semibold text-foreground">
-                  Plays Trend ({statsGranularity === "daily" ? "Daily" : "Weekly"})
+                  Views Trend ({statsGranularity === "daily" ? "Daily" : "Weekly"})
                 </h3>
                 <ChartContainer config={playsChartConfig} className="h-[240px] w-full">
                   <BarChart accessibilityLayer data={trendData}>
@@ -639,7 +643,7 @@ export default function ProfilePage() {
                     <XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={16} />
                     <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={28} />
                     <ChartTooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="plays" fill="var(--color-plays)" radius={4} />
+                    <Bar dataKey="views" fill="var(--color-views)" radius={4} />
                   </BarChart>
                 </ChartContainer>
               </div>
@@ -677,15 +681,15 @@ export default function ProfilePage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="counted_plays">Counted Plays</SelectItem>
+                      <SelectItem value="views">Views</SelectItem>
                       <SelectItem value="minutes">Watch Minutes</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 {topArtists.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    {topArtistMetric === "counted_plays" && statsHistory.length > 0
-                      ? "No counted plays in selected range. Expand date range or switch to Watch Minutes."
+                    {topArtistMetric === "views" && statsHistory.length > 0
+                      ? "No views in selected range. Expand date range or switch to Watch Minutes."
                       : "No playback data for this range."}
                   </p>
                 ) : (
@@ -713,8 +717,8 @@ export default function ProfilePage() {
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-semibold text-foreground">{artist.name}</p>
                           <p className="text-xs text-muted-foreground">
-                            {topArtistMetric === "counted_plays"
-                              ? `${artist.counted_plays} counted play${artist.counted_plays !== 1 ? "s" : ""}`
+                            {topArtistMetric === "views"
+                              ? `${artist.views} view${artist.views !== 1 ? "s" : ""}`
                               : formatWatchTime(artist.watch_seconds)}
                           </p>
                         </div>
@@ -742,7 +746,7 @@ export default function ProfilePage() {
                         tickFormatter={(value) => String(value).slice(0, 18)}
                       />
                       <ChartTooltip content={<ChartTooltipContent />} />
-                      <Bar dataKey="plays" fill="#3b82f6" radius={4} />
+                      <Bar dataKey="views" fill="#3b82f6" radius={4} />
                     </BarChart>
                   </ChartContainer>
                 )}
@@ -756,7 +760,7 @@ export default function ProfilePage() {
                 <div>
                   <h2 className="text-base font-semibold text-foreground">Playback History</h2>
                   <p className="text-xs text-muted-foreground">
-                    Filter by video title, artist, and date range.
+                    Records every playback session. Views are tracked separately when watch time reaches 20% of a video.
                   </p>
                 </div>
                 <p className="text-xs text-muted-foreground">{filteredPlaybackHistory.length} records</p>
@@ -826,6 +830,9 @@ export default function ProfilePage() {
                     <div key={entry.id} className="rounded-md border border-border px-3 py-2">
                       <p className="text-sm font-medium text-foreground">{entry.video_title}</p>
                       <p className="text-xs text-muted-foreground">{entry.artist_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {entry.counted_play ? "Counts as a view" : "History only"}
+                      </p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {formatWatched(entry.watched_seconds)} watched · {new Date(entry.played_at).toLocaleString()}
                       </p>

@@ -18,11 +18,13 @@ class SettingUpdate(BaseModel):
 class RuntimeSettingsRead(BaseModel):
     media_path: str
     transcoding_enabled: bool
+    view_threshold_percent: int = Field(ge=1, le=100)
 
 
 class RuntimeSettingsUpdate(BaseModel):
     media_path: str = Field(min_length=1)
     transcoding_enabled: bool
+    view_threshold_percent: int = Field(ge=1, le=100)
 
 
 class ThumbnailRegenerateResponse(BaseModel):

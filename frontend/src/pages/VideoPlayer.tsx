@@ -21,6 +21,7 @@ interface VideoPlayRecord {
   id: string;
   watched_seconds: number;
   video_duration_seconds: number | null;
+  counted_play: boolean;
   played_at: string;
 }
 
@@ -371,6 +372,9 @@ export default function VideoPlayer() {
           <DialogHeader>
             <DialogTitle>Playback History</DialogTitle>
           </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Includes every playback session. Views require at least 20% watched.
+          </p>
           {!playStats || playStats.history.length === 0 ? (
             <p className="text-sm text-muted-foreground">No playback history yet.</p>
           ) : (
@@ -382,6 +386,9 @@ export default function VideoPlayer() {
                 >
                   <p className="text-sm font-medium text-foreground">
                     {formatSeconds(play.watched_seconds)} watched
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {play.counted_play ? "Counts as a view" : "History only"}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {new Date(play.played_at).toLocaleString()}

@@ -20,13 +20,17 @@ from app.schemas.video import (
     VideoPlayRead,
     VideoPlayStats,
     VideoRead,
+    SpotifyTrackMatch,
     VideoUpdate,
 )
 from app.services.background_jobs import submit_job
+from app.services.playback import is_counted_view
 from app.services.runtime_settings import (
     get_effective_media_path,
     get_effective_transcoding_enabled,
+    get_effective_view_threshold_ratio,
 )
+from app.services.spotify import search_tracks
 from app.tasks.media import generate_hls_for_video
 
 router = APIRouter(prefix="/videos", tags=["videos"])
@@ -114,6 +118,36 @@ async def list_videos(
     ]
 
 
+@router.get("/spotify/search", response_model=list[SpotifyTrackMatch])
+async def search_spotify_tracks(
+    q: str = Query(..., min_length=1),
+    artist_name: str | None = Query(None),
+    limit: int = Query(10, ge=1, le=20),
+    _admin: User = Depends(get_current_admin),
+):
+    client_id = settings.SPOTIFY_CLIENT_ID.strip()
+    client_secret = settings.SPOTIFY_CLIENT_SECRET.strip()
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Spotify integration is not configured on the server",
+        )
+
+    try:
+        return await search_tracks(
+            client_id=client_id,
+            client_secret=client_secret,
+            query=q,
+            artist_name=artist_name,
+            limit=limit,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to fetch Spotify metadata: {exc}",
+        ) from exc
+
+
 @router.get("/{video_id}", response_model=VideoRead)
 async def get_video(video_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -147,7 +181,12 @@ async def record_video_play(
     video = await _get_active_video(video_id, db)
     watched_seconds = max(0, int(round(body.watched_seconds)))
     duration = body.video_duration_seconds or video.duration
-    counted_play = bool(duration and duration > 0 and watched_seconds >= (duration * 0.5))
+    threshold_ratio = await get_effective_view_threshold_ratio(db)
+    counted_play = is_counted_view(
+        watched_seconds=watched_seconds,
+        video_duration_seconds=duration,
+        threshold_ratio=threshold_ratio,
+    )
 
     play = VideoPlay(
         video_id=video.id,
