@@ -70,6 +70,16 @@ interface ImportResponse {
   warnings: string[];
 }
 
+type VideoRecommendationSource = "lastfm" | "genre";
+
+const VIDEO_RECOMMENDATION_SOURCE_KEY = "videoRecommendationSource";
+
+function getStoredVideoRecommendationSource(): VideoRecommendationSource {
+  if (typeof window === "undefined") return "lastfm";
+  const value = window.localStorage.getItem(VIDEO_RECOMMENDATION_SOURCE_KEY);
+  return value === "genre" ? "genre" : "lastfm";
+}
+
 function getCookie(name: string): string | null {
   const match = document.cookie
     .split("; ")
@@ -78,12 +88,19 @@ function getCookie(name: string): string | null {
   return decodeURIComponent(match.split("=")[1] || "");
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
 export default function SettingsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [autoScan, setAutoScan] = useState(true);
   const [notifications, setNotifications] = useState(true);
   const [autoplay, setAutoplay] = useState(false);
+  const [videoRecommendationSource, setVideoRecommendationSource] =
+    useState<VideoRecommendationSource>(getStoredVideoRecommendationSource);
 
   // Scan state
   const [scanJobId, setScanJobId] = useState<string | null>(null);
@@ -114,7 +131,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       toast.success("User deleted");
     },
-    onError: (err: any) => toast.error(err.message || "Failed to delete user"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to delete user")),
   });
 
   useEffect(() => {
@@ -135,7 +152,8 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
       toast.success("Runtime settings saved");
     },
-    onError: (err: any) => toast.error(err.message || "Failed to save runtime settings"),
+    onError: (error: unknown) =>
+      toast.error(getErrorMessage(error, "Failed to save runtime settings")),
   });
 
   const regenerateThumbs = useMutation({
@@ -143,7 +161,8 @@ export default function SettingsPage() {
     onSuccess: (resp) => {
       toast.success(`${resp.message} (task ${resp.task_id.slice(0, 8)})`);
     },
-    onError: (err: any) => toast.error(err.message || "Failed to trigger thumbnail regeneration"),
+    onError: (error: unknown) =>
+      toast.error(getErrorMessage(error, "Failed to trigger thumbnail regeneration")),
   });
 
   const exportMutation = useMutation({
@@ -163,7 +182,7 @@ export default function SettingsPage() {
       URL.revokeObjectURL(url);
       toast.success("Export downloaded");
     },
-    onError: (err: any) => toast.error(err.message || "Failed to export data"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to export data")),
   });
 
   const importMutation = useMutation({
@@ -194,7 +213,7 @@ export default function SettingsPage() {
         toast.info(`Import warnings: ${resp.warnings.slice(0, 2).join(" | ")}`);
       }
     },
-    onError: (err: any) => toast.error(err.message || "Failed to import data"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to import data")),
   });
 
   const pollScanStatus = useCallback(async (jobId: string) => {
@@ -227,6 +246,11 @@ export default function SettingsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(VIDEO_RECOMMENDATION_SOURCE_KEY, videoRecommendationSource);
+  }, [videoRecommendationSource]);
+
   async function handleScan() {
     if (scanning) return;
     setScanning(true);
@@ -241,9 +265,9 @@ export default function SettingsPage() {
       pollRef.current = setInterval(() => pollScanStatus(jobId), 2000);
       // Also poll immediately after a short delay
       setTimeout(() => pollScanStatus(jobId), 1000);
-    } catch (err: any) {
+    } catch (error: unknown) {
       setScanning(false);
-      toast.error(err.message || "Failed to start scan");
+      toast.error(getErrorMessage(error, "Failed to start scan"));
     }
   }
 
@@ -466,6 +490,25 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between">
               <Label htmlFor="autoplay">Autoplay next video</Label>
               <Switch id="autoplay" checked={autoplay} onCheckedChange={setAutoplay} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="video-recommendation-source">Recommended videos source</Label>
+              <select
+                id="video-recommendation-source"
+                value={videoRecommendationSource}
+                onChange={(e) =>
+                  setVideoRecommendationSource(
+                    e.target.value === "genre" ? "genre" : "lastfm"
+                  )
+                }
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+              >
+                <option value="lastfm">Last.fm similar tracks</option>
+                <option value="genre">Same genre in library</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                Controls how recommended music videos are generated in the player.
+              </p>
             </div>
           </section>
 

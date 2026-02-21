@@ -47,6 +47,10 @@ interface PlaybackHistoryItem {
   played_at: string;
 }
 
+interface ViewThresholdSettings {
+  view_threshold_percent: number;
+}
+
 type StatsRangePreset = "7d" | "30d" | "90d" | "custom";
 type StatsGranularity = "daily" | "weekly";
 type TopArtistMetric = "views" | "minutes";
@@ -75,6 +79,10 @@ function formatWatchTime(totalSeconds: number): string {
   const hours = Math.floor(minutes / 60);
   const remMinutes = minutes % 60;
   return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+}
+
+function formatViewCount(count: number): string {
+  return `${count} view${count === 1 ? "" : "s"}`;
 }
 
 function toDateInputValue(date: Date): string {
@@ -161,6 +169,11 @@ export default function ProfilePage() {
     queryKey: ["my-playback-history"],
     queryFn: () => api.get("/auth/me/plays?limit=2000"),
   });
+  const { data: viewThreshold } = useQuery<ViewThresholdSettings>({
+    queryKey: ["view-threshold"],
+    queryFn: () => api.get("/settings/view-threshold"),
+  });
+  const viewThresholdPercent = viewThreshold?.view_threshold_percent ?? 20;
 
   const parsedPlaybackHistory = useMemo(
     () =>
@@ -372,8 +385,9 @@ export default function ProfilePage() {
       // Re-fetch user info by refreshing the page context
       window.location.reload();
     },
-    onError: (err: any) => {
-      toast.error(err.message || "Failed to update profile");
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Failed to update profile";
+      toast.error(message);
     },
   });
 
@@ -615,7 +629,7 @@ export default function ProfilePage() {
                   <p className="truncate text-sm font-semibold text-foreground">
                     {topArtists[0]
                       ? topArtistMetric === "views"
-                        ? `${topArtists[0].name} (${topArtists[0].views} view${topArtists[0].views !== 1 ? "s" : ""})`
+                        ? `${topArtists[0].name} (${formatViewCount(topArtists[0].views)})`
                         : `${topArtists[0].name} (${formatWatchTime(topArtists[0].watch_seconds)})`
                       : "No data"}
                   </p>
@@ -626,7 +640,9 @@ export default function ProfilePage() {
                 <div className="mt-2 flex items-center gap-2">
                   <Music2 className="h-4 w-4 text-primary" />
                   <p className="truncate text-sm font-semibold text-foreground">
-                    {topVideos[0] ? `${topVideos[0].title} (${topVideos[0].views})` : "No data"}
+                    {topVideos[0]
+                      ? `${topVideos[0].title} (${formatViewCount(topVideos[0].views)})`
+                      : "No data"}
                   </p>
                 </div>
               </div>
@@ -718,7 +734,7 @@ export default function ProfilePage() {
                           <p className="truncate text-sm font-semibold text-foreground">{artist.name}</p>
                           <p className="text-xs text-muted-foreground">
                             {topArtistMetric === "views"
-                              ? `${artist.views} view${artist.views !== 1 ? "s" : ""}`
+                              ? formatViewCount(artist.views)
                               : formatWatchTime(artist.watch_seconds)}
                           </p>
                         </div>
@@ -760,7 +776,7 @@ export default function ProfilePage() {
                 <div>
                   <h2 className="text-base font-semibold text-foreground">Playback History</h2>
                   <p className="text-xs text-muted-foreground">
-                    Records every playback session. Views are tracked separately when watch time reaches 20% of a video.
+                    Records every playback session. Views are tracked separately when watch time reaches {viewThresholdPercent}% of a video.
                   </p>
                 </div>
                 <p className="text-xs text-muted-foreground">{filteredPlaybackHistory.length} records</p>

@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import type { MusicVideo } from "@/data/mockData";
 import PageTransition from "@/components/PageTransition";
 import { ArrowLeft, Calendar, Disc, Tag, User, Clock, AlertCircle, Loader2, ListOrdered, SkipBack, SkipForward, GripVertical } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQueue } from "@/contexts/QueueContext";
@@ -29,6 +30,39 @@ interface VideoPlayStats {
   play_count: number;
   total_watched_seconds: number;
   history: VideoPlayRecord[];
+}
+
+interface VideoRecommendationItem {
+  video: MusicVideo;
+  lastfm_match: number | null;
+}
+
+interface VideoRecommendationsPage {
+  items: VideoRecommendationItem[];
+  offset: number;
+  limit: number;
+  has_more: boolean;
+}
+
+interface ViewThresholdSettings {
+  view_threshold_percent: number;
+}
+
+type VideoRecommendationSource = "lastfm" | "genre";
+
+const VIDEO_RECOMMENDATION_SOURCE_KEY = "videoRecommendationSource";
+
+function getVideoRecommendationSource(): VideoRecommendationSource {
+  if (typeof window === "undefined") return "lastfm";
+  const value = window.localStorage.getItem(VIDEO_RECOMMENDATION_SOURCE_KEY);
+  return value === "genre" ? "genre" : "lastfm";
+}
+
+function getResponsiveRecommendationLimit(): number {
+  if (typeof window === "undefined") return 6;
+  if (window.innerWidth < 640) return 2;
+  if (window.innerWidth < 1024) return 4;
+  return 6;
 }
 
 function formatSeconds(totalSeconds: number): string {
@@ -70,6 +104,13 @@ export default function VideoPlayer() {
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
+  const [recommendationPage, setRecommendationPage] = useState(1);
+  const [recommendationBaseLimit, setRecommendationBaseLimit] = useState(
+    getResponsiveRecommendationLimit
+  );
+  const [recommendationSource] = useState<VideoRecommendationSource>(
+    getVideoRecommendationSource
+  );
   const playClockStartedAtRef = useRef<number | null>(null);
   const watchedSecondsRef = useRef(0);
   const submittingPlayRef = useRef(false);
@@ -91,6 +132,26 @@ export default function VideoPlayer() {
     queryFn: () => api.get(`/videos/${id}/plays`),
     enabled: !!id,
   });
+  const { data: viewThreshold } = useQuery<ViewThresholdSettings>({
+    queryKey: ["view-threshold"],
+    queryFn: () => api.get("/settings/view-threshold"),
+  });
+  const viewThresholdPercent = viewThreshold?.view_threshold_percent ?? 20;
+  const recommendationLimit = recommendationPage * recommendationBaseLimit;
+  const { data: recommendations, isLoading: recommendationsLoading } =
+    useQuery<VideoRecommendationsPage>({
+      queryKey: ["video-recommendations", id, recommendationLimit, recommendationSource],
+      queryFn: () =>
+        api.get(
+          `/videos/${id}/recommendations?offset=0&limit=${recommendationLimit}&source=${recommendationSource}`
+        ),
+      enabled: !!id,
+      staleTime: 120_000,
+    });
+  const recommendationHeading =
+    recommendationSource === "genre"
+      ? "Recommended Music Videos (Genre)"
+      : "Recommended Music Videos (Last.fm)";
 
   const pausePlayClock = useCallback(() => {
     if (playClockStartedAtRef.current === null) return;
@@ -158,6 +219,18 @@ export default function VideoPlayer() {
     };
   }, [submitPlaySession]);
 
+  useEffect(() => {
+    function onResize() {
+      setRecommendationBaseLimit(getResponsiveRecommendationLimit());
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    setRecommendationPage(1);
+  }, [id, recommendationBaseLimit]);
+
   if (!video) {
     return <p className="text-muted-foreground">Loading...</p>;
   }
@@ -175,6 +248,16 @@ export default function VideoPlayer() {
   function playQueueIndex(index: number) {
     const selected = playAtIndex(index);
     if (selected) navigate(`/video/${selected.id}`);
+  }
+
+  function playRecommendedVideo(selected: MusicVideo) {
+    const recommendedVideos = (recommendations?.items || []).map((item) => item.video);
+    const queueVideos = [
+      selected,
+      ...recommendedVideos.filter((videoItem) => videoItem.id !== selected.id),
+    ];
+    startQueue(queueVideos, { startIndex: 0 });
+    navigate(`/video/${selected.id}`);
   }
 
   return (
@@ -287,10 +370,62 @@ export default function VideoPlayer() {
                 View Playback History
               </Button>
             </div>
+
+            <section className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-semibold text-foreground">
+                  {recommendationHeading}
+                </h2>
+                {recommendations?.has_more && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setRecommendationPage((prev) => prev + 1)}
+                  >
+                    See more
+                  </Button>
+                )}
+              </div>
+              {recommendationsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading recommendations...</p>
+              ) : recommendations && recommendations.items.length > 0 ? (
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {recommendations.items.map((item) => (
+                    <button
+                      key={item.video.id}
+                      type="button"
+                      onClick={() => playRecommendedVideo(item.video)}
+                      className="w-52 shrink-0 overflow-hidden rounded-lg border border-border bg-card text-left transition-colors hover:border-primary/40"
+                    >
+                      <div className="relative aspect-video bg-secondary">
+                        <img
+                          src={item.video.thumbnail_url || "/placeholder.svg"}
+                          alt={item.video.title}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="space-y-0.5 p-3">
+                        <p className="line-clamp-2 text-sm font-semibold text-foreground">
+                          {item.video.title}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {item.video.artist_name}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No recommendations available yet.
+                </p>
+              )}
+            </section>
           </div>
         </div>
 
-        {queue.length > 0 && (
+        {queue.length > 1 && (
           <aside className="mt-5 rounded-xl border border-border bg-card p-4 lg:sticky lg:top-4 lg:mt-0 lg:w-96">
             <div className="mb-3 flex items-center gap-2">
               <ListOrdered className="h-4 w-4 text-primary" />
@@ -373,7 +508,7 @@ export default function VideoPlayer() {
             <DialogTitle>Playback History</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Includes every playback session. Views require at least 20% watched.
+            Includes every playback session. Views require at least {viewThresholdPercent}% watched.
           </p>
           {!playStats || playStats.history.length === 0 ? (
             <p className="text-sm text-muted-foreground">No playback history yet.</p>
@@ -403,7 +538,15 @@ export default function VideoPlayer() {
   );
 }
 
-function InfoItem({ icon: Icon, label, children }: { icon: any; label: string; children: React.ReactNode }) {
+function InfoItem({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: LucideIcon;
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="rounded-lg border border-border bg-card p-3">
       <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">

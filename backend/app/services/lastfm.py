@@ -124,6 +124,120 @@ def add_lastfm_attribution(bio_text: str | None, artist_name: str) -> str:
     return f"{LASTFM_ATTRIBUTION_LINE}\n{LASTFM_LINK_PREFIX} {url}"
 
 
+def normalize_for_match(value: str | None) -> str:
+    if not value:
+        return ""
+    return "".join(ch.lower() for ch in value if ch.isalnum())
+
+
+def _coerce_match_score(value: str | float | int | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_similar_artists(
+    artist_name: str,
+    api_key: str,
+    *,
+    limit: int = 100,
+) -> list[dict]:
+    data = _request_json_with_retries(
+        url=LASTFM_API_URL,
+        params={
+            "method": "artist.getsimilar",
+            "artist": artist_name,
+            "api_key": api_key,
+            "format": "json",
+            "autocorrect": 1,
+            "limit": max(1, min(limit, 200)),
+        },
+        timeout_seconds=15,
+        rate_bucket="lastfm_api",
+        context=f"Last.fm artist.getsimilar ({artist_name})",
+    )
+    if not data:
+        return []
+    if data.get("error") is not None:
+        logger.info("Last.fm artist.getsimilar returned error for %s: %s", artist_name, data.get("message"))
+        return []
+
+    similar = (data.get("similarartists") or {}).get("artist") or []
+    if isinstance(similar, dict):
+        similar = [similar]
+
+    items: list[dict] = []
+    for row in similar:
+        name = (row or {}).get("name")
+        if not name:
+            continue
+        items.append(
+            {
+                "name": name,
+                "match": _coerce_match_score((row or {}).get("match")),
+            }
+        )
+    return items
+
+
+def fetch_similar_tracks(
+    track_name: str,
+    artist_name: str,
+    api_key: str,
+    *,
+    limit: int = 100,
+) -> list[dict]:
+    data = _request_json_with_retries(
+        url=LASTFM_API_URL,
+        params={
+            "method": "track.getsimilar",
+            "track": track_name,
+            "artist": artist_name,
+            "api_key": api_key,
+            "format": "json",
+            "autocorrect": 1,
+            "limit": max(1, min(limit, 200)),
+        },
+        timeout_seconds=15,
+        rate_bucket="lastfm_api",
+        context=f"Last.fm track.getsimilar ({artist_name} - {track_name})",
+    )
+    if not data:
+        return []
+    if data.get("error") is not None:
+        logger.info("Last.fm track.getsimilar returned error for %s - %s: %s", artist_name, track_name, data.get("message"))
+        return []
+
+    similar = (data.get("similartracks") or {}).get("track") or []
+    if isinstance(similar, dict):
+        similar = [similar]
+
+    items: list[dict] = []
+    for row in similar:
+        row = row or {}
+        title = row.get("name")
+        if not title:
+            continue
+        row_artist = row.get("artist")
+        if isinstance(row_artist, dict):
+            row_artist_name = row_artist.get("name")
+        else:
+            row_artist_name = row_artist
+        if not row_artist_name:
+            continue
+        items.append(
+            {
+                "title": title,
+                "artist_name": row_artist_name,
+                "match": _coerce_match_score(row.get("match")),
+            }
+        )
+    return items
+
+
 def fetch_artist_info(artist_name: str, api_key: str) -> dict | None:
     """Fetch artist bio and image URL from Last.fm with attribution-compliant bio output."""
     try:

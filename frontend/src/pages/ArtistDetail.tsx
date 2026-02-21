@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -49,6 +49,31 @@ interface MetadataRow {
   showMatchOptions: boolean;
 }
 
+interface RecommendedArtistItem {
+  id: string;
+  name: string;
+  bio: string | null;
+  image_url: string | null;
+  video_count: number;
+  play_count: number;
+  created_at: string | null;
+  lastfm_match: number | null;
+}
+
+interface ArtistRecommendationsPage {
+  items: RecommendedArtistItem[];
+  offset: number;
+  limit: number;
+  has_more: boolean;
+}
+
+function getResponsiveRecommendationLimit(): number {
+  if (typeof window === "undefined") return 6;
+  if (window.innerWidth < 640) return 2;
+  if (window.innerWidth < 1024) return 4;
+  return 6;
+}
+
 function parseArtistBio(rawBio: string | null | undefined): { body: string; lastfmUrl: string | null } {
   const text = rawBio || "";
   const match = text.match(LASTFM_ATTRIBUTION_FOOTER_REGEX);
@@ -63,6 +88,11 @@ function getCookie(name: string): string | null {
     .find((part) => part.startsWith(`${name}=`));
   if (!match) return null;
   return decodeURIComponent(match.split("=")[1] || "");
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }
 
 export default function ArtistDetail() {
@@ -80,6 +110,10 @@ export default function ArtistDetail() {
   const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
   const [metadataSaving, setMetadataSaving] = useState(false);
   const [searchAllRunning, setSearchAllRunning] = useState(false);
+  const [artistRecPage, setArtistRecPage] = useState(1);
+  const [artistRecBaseLimit, setArtistRecBaseLimit] = useState(
+    getResponsiveRecommendationLimit
+  );
   const [page, setPage] = useState(1);
 
   const { data: artist, isLoading, isError } = useQuery<ArtistDetailType>({
@@ -87,6 +121,29 @@ export default function ArtistDetail() {
     queryFn: () => api.get(`/artists/${id}`),
     enabled: !!id,
   });
+  const recommendationLimit = artistRecPage * artistRecBaseLimit;
+  const { data: artistRecommendations, isLoading: artistRecommendationsLoading } =
+    useQuery<ArtistRecommendationsPage>({
+      queryKey: ["artist-recommendations", id, recommendationLimit],
+      queryFn: () =>
+        api.get(
+          `/artists/${id}/recommendations?offset=0&limit=${recommendationLimit}`
+        ),
+      enabled: !!id,
+      staleTime: 120_000,
+    });
+
+  useEffect(() => {
+    function onResize() {
+      setArtistRecBaseLimit(getResponsiveRecommendationLimit());
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    setArtistRecPage(1);
+  }, [id, artistRecBaseLimit]);
 
   const uploadImage = useMutation({
     mutationFn: async (file: File) => {
@@ -111,7 +168,7 @@ export default function ArtistDetail() {
       queryClient.invalidateQueries({ queryKey: ["artists"] });
       toast.success("Artist image updated");
     },
-    onError: (err: any) => toast.error(err.message || "Failed to upload image"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to upload image")),
   });
 
   const editMutation = useMutation({
@@ -128,7 +185,7 @@ export default function ArtistDetail() {
       setEditOpen(false);
       toast.success("Artist updated");
     },
-    onError: (err: any) => toast.error(err.message || "Failed to update"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to update")),
   });
 
   function openEdit() {
@@ -210,7 +267,7 @@ export default function ArtistDetail() {
       if (results.length === 0) {
         toast.info(`No Spotify matches for "${query}"`);
       }
-    } catch (err: any) {
+    } catch (error: unknown) {
       setMetadataRows((prev) =>
         prev.map((item) =>
           item.videoId === videoId
@@ -218,7 +275,7 @@ export default function ArtistDetail() {
             : item
         )
       );
-      toast.error(err.message || "Failed to search Spotify");
+      toast.error(getErrorMessage(error, "Failed to search Spotify"));
     }
   }
 
@@ -276,8 +333,8 @@ export default function ArtistDetail() {
       queryClient.invalidateQueries({ queryKey: ["search-videos"] });
       setMetadataOpen(false);
       toast.success(`Updated ${updates.length} music video${updates.length !== 1 ? "s" : ""}`);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to save music video metadata");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to save music video metadata"));
     } finally {
       setMetadataSaving(false);
     }
@@ -501,7 +558,6 @@ export default function ArtistDetail() {
           </div>
         </div>
 
-        {/* Videos */}
         <h2 className="mb-4 mt-10 text-xl font-bold text-foreground">Music Videos</h2>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {paginatedVideos.map((v) => (
@@ -531,6 +587,59 @@ export default function ArtistDetail() {
             </Button>
           </div>
         )}
+        <section className="mt-10 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-foreground">
+              Recommended Artists (Last.fm)
+            </h2>
+            {artistRecommendations?.has_more && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setArtistRecPage((prev) => prev + 1)}
+              >
+                See more
+              </Button>
+            )}
+          </div>
+          {artistRecommendationsLoading ? (
+            <p className="text-sm text-muted-foreground">Loading recommendations...</p>
+          ) : artistRecommendations && artistRecommendations.items.length > 0 ? (
+            <div className="flex gap-3 overflow-x-auto pb-2">
+              {artistRecommendations.items.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => navigate(`/artist/${item.id}`)}
+                  className="w-52 shrink-0 rounded-xl p-4 text-center transition-colors hover:bg-secondary/40"
+                >
+                  <div className="mx-auto mb-3 h-32 w-32 overflow-hidden rounded-full bg-secondary">
+                    {item.image_url ? (
+                      <img
+                        src={item.image_url}
+                        alt={item.name}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-xl font-semibold text-muted-foreground">
+                        {item.name.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <p className="truncate text-sm font-semibold text-foreground">{item.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {item.video_count} video{item.video_count !== 1 ? "s" : ""}
+                  </p>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No recommended artists from your library for this artist yet.
+            </p>
+          )}
+        </section>
         {/* Edit dialog */}
         <Dialog open={editOpen && isAdmin} onOpenChange={setEditOpen}>
           <DialogContent>

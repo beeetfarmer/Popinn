@@ -27,6 +27,10 @@ class RuntimeSettingsUpdate(BaseModel):
     view_threshold_percent: int = Field(ge=1, le=100)
 
 
+class ViewThresholdRead(BaseModel):
+    view_threshold_percent: int = Field(ge=1, le=100)
+
+
 class ThumbnailRegenerateResponse(BaseModel):
     message: str
     task_id: str
