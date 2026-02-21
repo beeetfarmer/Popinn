@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
-import { User, Shield, Calendar, Upload, Pencil, Clock3, PlayCircle, Music2, Radio } from "lucide-react";
+import { User, Shield, Calendar, Upload, Pencil, Clock3, PlayCircle, Music2, Radio, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +25,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import PageTransition from "@/components/PageTransition";
 import { toast } from "sonner";
+import type { MusicVideo } from "@/data/mockData";
 
 interface ProfileUser {
   id: string;
@@ -54,6 +55,7 @@ interface ViewThresholdSettings {
 type StatsRangePreset = "7d" | "30d" | "90d" | "custom";
 type StatsGranularity = "daily" | "weekly";
 type TopArtistMetric = "views" | "minutes";
+type TopVideoMetric = "views" | "minutes";
 
 function getCookie(name: string): string | null {
   const match = document.cookie
@@ -138,12 +140,8 @@ const watchChartConfig = {
   watch_minutes: { label: "Watch Minutes", color: "#22c55e" },
 } satisfies ChartConfig;
 
-const rankingChartConfig = {
-  views: { label: "Views", color: "#3b82f6" },
-} satisfies ChartConfig;
-
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [dragOver, setDragOver] = useState(false);
@@ -157,6 +155,7 @@ export default function ProfilePage() {
   const [statsPreset, setStatsPreset] = useState<StatsRangePreset>("30d");
   const [statsGranularity, setStatsGranularity] = useState<StatsGranularity>("daily");
   const [topArtistMetric, setTopArtistMetric] = useState<TopArtistMetric>("views");
+  const [topVideoMetric, setTopVideoMetric] = useState<TopVideoMetric>("views");
   const [statsStart, setStatsStart] = useState(() => toDateInputValue(addDays(new Date(), -29)));
   const [statsEnd, setStatsEnd] = useState(() => toDateInputValue(new Date()));
 
@@ -278,7 +277,7 @@ export default function ProfilePage() {
           ? b.views - a.views || b.watch_seconds - a.watch_seconds
           : b.watch_seconds - a.watch_seconds || b.views - a.views
       );
-    return ranked.slice(0, 6);
+    return ranked.slice(0, 5);
   }, [statsHistory, topArtistMetric]);
 
   const topArtistDetails = useQueries({
@@ -298,7 +297,10 @@ export default function ProfilePage() {
   }, [topArtists, topArtistDetails]);
 
   const topVideos = useMemo(() => {
-    const map = new Map<string, { title: string; views: number; watch_seconds: number }>();
+    const map = new Map<
+      string,
+      { id: string; title: string; artist_name: string; views: number; watch_seconds: number }
+    >();
     statsHistory.forEach((entry) => {
       const existing = map.get(entry.video_id);
       if (existing) {
@@ -306,22 +308,41 @@ export default function ProfilePage() {
         existing.watch_seconds += entry.watched_seconds;
       } else {
         map.set(entry.video_id, {
+          id: entry.video_id,
           title: entry.video_title,
+          artist_name: entry.artist_name,
           views: entry.counted_play ? 1 : 0,
           watch_seconds: entry.watched_seconds,
         });
       }
     });
     return Array.from(map.values())
-      .filter((video) => video.views > 0)
-      .sort((a, b) => b.views - a.views || b.watch_seconds - a.watch_seconds)
-      .slice(0, 6);
-  }, [statsHistory]);
+      .filter((video) =>
+        topVideoMetric === "views" ? video.views > 0 : video.watch_seconds > 0
+      )
+      .sort((a, b) =>
+        topVideoMetric === "views"
+          ? b.views - a.views || b.watch_seconds - a.watch_seconds
+          : b.watch_seconds - a.watch_seconds || b.views - a.views
+      )
+      .slice(0, 5);
+  }, [statsHistory, topVideoMetric]);
 
-  const topVideoChartData = useMemo(
-    () => topVideos.map((video) => ({ label: video.title, views: video.views })),
-    [topVideos]
-  );
+  const topVideoDetails = useQueries({
+    queries: topVideos.map((video) => ({
+      queryKey: ["top-video-brief", video.id],
+      queryFn: () => api.get<MusicVideo>(`/videos/${video.id}`),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+
+  const topVideoThumbMap = useMemo(() => {
+    const map = new Map<string, string | null>();
+    topVideos.forEach((video, index) => {
+      map.set(video.id, topVideoDetails[index]?.data?.thumbnail_url || null);
+    });
+    return map;
+  }, [topVideos, topVideoDetails]);
 
   const totalWatchSeconds = useMemo(
     () => statsHistory.reduce((sum, item) => sum + item.watched_seconds, 0),
@@ -463,6 +484,20 @@ export default function ProfilePage() {
     [uploadImageMutation]
   );
 
+  function handleSignOut() {
+    logout();
+    navigate("/login", { replace: true });
+  }
+
+  function openStatsRankings() {
+    const params = new URLSearchParams();
+    params.set("start", toDateInputValue(statsRange.start));
+    params.set("end", toDateInputValue(statsRange.end));
+    params.set("artist_metric", topArtistMetric);
+    params.set("video_metric", topVideoMetric);
+    navigate(`/profile/stats-rankings?${params.toString()}`);
+  }
+
   return (
     <PageTransition>
       <div className="mx-auto max-w-5xl space-y-6">
@@ -518,15 +553,15 @@ export default function ProfilePage() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-bold text-foreground">{user?.username}</h1>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 px-2"
+                <button
+                  type="button"
                   onClick={() => setEditOpen(true)}
+                  className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  aria-label="Edit profile"
+                  title="Edit profile"
                 >
-                  <Pencil className="mr-1 h-3.5 w-3.5" />
-                  Edit
-                </Button>
+                  <Pencil className="h-4 w-4" />
+                </button>
               </div>
               <p className="text-sm text-muted-foreground">{user?.email}</p>
               <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
@@ -539,6 +574,15 @@ export default function ProfilePage() {
                   Member since {user?.created_at ? new Date(user.created_at).toLocaleDateString() : ""}
                 </span>
               </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-3 h-8 px-2"
+                onClick={handleSignOut}
+              >
+                <LogOut className="mr-1 h-3.5 w-3.5" />
+                Sign out
+              </Button>
             </div>
           </div>
         </div>
@@ -641,7 +685,9 @@ export default function ProfilePage() {
                   <Music2 className="h-4 w-4 text-primary" />
                   <p className="truncate text-sm font-semibold text-foreground">
                     {topVideos[0]
-                      ? `${topVideos[0].title} (${formatViewCount(topVideos[0].views)})`
+                      ? topVideoMetric === "views"
+                        ? `${topVideos[0].title} (${formatViewCount(topVideos[0].views)})`
+                        : `${topVideos[0].title} (${formatWatchTime(topVideos[0].watch_seconds)})`
                       : "No data"}
                   </p>
                 </div>
@@ -689,18 +735,23 @@ export default function ProfilePage() {
               <div className="rounded-xl border border-border bg-card p-4">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-foreground">Top Artists</h3>
-                  <Select
-                    value={topArtistMetric}
-                    onValueChange={(value) => setTopArtistMetric(value as TopArtistMetric)}
-                  >
-                    <SelectTrigger className="h-8 w-[170px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="views">Views</SelectItem>
-                      <SelectItem value="minutes">Watch Minutes</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={topArtistMetric}
+                      onValueChange={(value) => setTopArtistMetric(value as TopArtistMetric)}
+                    >
+                      <SelectTrigger className="h-8 w-[170px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="views">Views</SelectItem>
+                        <SelectItem value="minutes">Watch Minutes</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button variant="ghost" size="sm" onClick={openStatsRankings}>
+                      See more
+                    </Button>
+                  </div>
                 </div>
                 {topArtists.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
@@ -745,26 +796,67 @@ export default function ProfilePage() {
                 )}
               </div>
               <div className="rounded-xl border border-border bg-card p-4">
-                <h3 className="mb-2 text-sm font-semibold text-foreground">Top Music Videos</h3>
-                {topVideoChartData.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No playback data for this range.</p>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-foreground">Top Music Videos</h3>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={topVideoMetric}
+                      onValueChange={(value) => setTopVideoMetric(value as TopVideoMetric)}
+                    >
+                      <SelectTrigger className="h-8 w-[170px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="views">Views</SelectItem>
+                        <SelectItem value="minutes">Watch Minutes</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button variant="ghost" size="sm" onClick={openStatsRankings}>
+                      See more
+                    </Button>
+                  </div>
+                </div>
+                {topVideos.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    {topVideoMetric === "views" && statsHistory.length > 0
+                      ? "No views in selected range. Expand date range or switch to Watch Minutes."
+                      : "No playback data for this range."}
+                  </p>
                 ) : (
-                  <ChartContainer config={rankingChartConfig} className="h-[240px] w-full">
-                    <BarChart accessibilityLayer data={topVideoChartData} layout="vertical" margin={{ left: 8 }}>
-                      <CartesianGrid horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tickLine={false} axisLine={false} />
-                      <YAxis
-                        dataKey="label"
-                        type="category"
-                        tickLine={false}
-                        axisLine={false}
-                        width={120}
-                        tickFormatter={(value) => String(value).slice(0, 18)}
-                      />
-                      <ChartTooltip content={<ChartTooltipContent />} />
-                      <Bar dataKey="views" fill="#3b82f6" radius={4} />
-                    </BarChart>
-                  </ChartContainer>
+                  <div className="space-y-2">
+                    {topVideos.map((video, index) => (
+                      <div
+                        key={video.id}
+                        className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 transition-colors hover:border-primary/35 hover:bg-secondary/20"
+                        onClick={() => navigate(`/video/${video.id}`)}
+                      >
+                        <div className="h-12 w-20 overflow-hidden rounded bg-secondary">
+                          {topVideoThumbMap.get(video.id) ? (
+                            <img
+                              src={topVideoThumbMap.get(video.id) || ""}
+                              alt={video.title}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold text-muted-foreground">
+                              No image
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-foreground">{video.title}</p>
+                          <p className="truncate text-xs text-muted-foreground">{video.artist_name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {topVideoMetric === "views"
+                              ? formatViewCount(video.views)
+                              : formatWatchTime(video.watch_seconds)}
+                          </p>
+                        </div>
+                        <p className="text-xs font-medium text-muted-foreground">#{index + 1}</p>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </section>

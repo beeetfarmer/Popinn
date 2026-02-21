@@ -15,6 +15,10 @@ export default defineConfig({
         target: "http://localhost:8471",
         changeOrigin: true,
       },
+      "/data": {
+        target: "http://localhost:8471",
+        changeOrigin: true,
+      },
     },
   },
   plugins: [react()],

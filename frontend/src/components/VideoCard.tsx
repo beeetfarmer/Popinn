@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreVertical, Pencil, Trash2, ListPlus, Play } from "lucide-react";
@@ -46,10 +46,26 @@ interface SpotifyTrackMatch {
   artist_names: string[];
 }
 
+const VIDEO_HOVER_PREVIEW_ENABLED_KEY = "videoHoverPreviewEnabled";
+
+function getStoredHoverPreviewEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  const value = window.localStorage.getItem(VIDEO_HOVER_PREVIEW_ENABLED_KEY);
+  if (value === null) return true;
+  return value === "1";
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
 export default function VideoCard({ video }: VideoCardProps) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const [isHovered, setIsHovered] = useState(false);
+  const [hoverPreviewEnabled] = useState(getStoredHoverPreviewEnabled);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editTitle, setEditTitle] = useState(video.title);
@@ -59,6 +75,11 @@ export default function VideoCard({ video }: VideoCardProps) {
   const [spotifyQuery, setSpotifyQuery] = useState(video.title);
   const [spotifySearching, setSpotifySearching] = useState(false);
   const [spotifyResults, setSpotifyResults] = useState<SpotifyTrackMatch[]>([]);
+  const hoverPreviewUrl = useMemo(
+    () => video.video_url || video.playback_url || null,
+    [video.playback_url, video.video_url]
+  );
+  const showHoverPreview = hoverPreviewEnabled && isHovered && !!hoverPreviewUrl;
 
   const { data: watchlists = [] } = useQuery<WatchlistItem[]>({
     queryKey: ["watchlists"],
@@ -74,11 +95,12 @@ export default function VideoCard({ video }: VideoCardProps) {
       queryClient.invalidateQueries({ queryKey: ["watchlists"] });
       toast.success("Added to watchlist");
     },
-    onError: (err: any) => {
-      if (err.message?.includes("already")) {
+    onError: (error: unknown) => {
+      const message = getErrorMessage(error, "Failed to add");
+      if (message.toLowerCase().includes("already")) {
         toast.info("Already in that watchlist");
       } else {
-        toast.error(err.message || "Failed to add");
+        toast.error(message);
       }
     },
   });
@@ -93,7 +115,7 @@ export default function VideoCard({ video }: VideoCardProps) {
       queryClient.invalidateQueries({ queryKey: ["watchlists"] });
       toast.success('Created "Watch Later" and added video');
     },
-    onError: (err: any) => toast.error(err.message || "Failed"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed")),
   });
 
   const editMutation = useMutation({
@@ -118,7 +140,7 @@ export default function VideoCard({ video }: VideoCardProps) {
       setEditOpen(false);
       toast.success("Video updated");
     },
-    onError: (err: any) => toast.error(err.message || "Failed to update"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to update")),
   });
 
   const deleteMutation = useMutation({
@@ -128,7 +150,7 @@ export default function VideoCard({ video }: VideoCardProps) {
       queryClient.invalidateQueries({ queryKey: ["search-videos"] });
       toast.success("Video deleted");
     },
-    onError: (err: any) => toast.error(err.message || "Failed to delete"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to delete")),
   });
 
   function handleAddToWatchlist() {
@@ -162,8 +184,8 @@ export default function VideoCard({ video }: VideoCardProps) {
       if (res.length === 0) {
         toast.info("No Spotify matches found");
       }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to search Spotify");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to search Spotify"));
     } finally {
       setSpotifySearching(false);
     }
@@ -180,15 +202,31 @@ export default function VideoCard({ video }: VideoCardProps) {
 
   return (
     <>
-      <div className="group relative card-hover">
+      <div
+        className="group relative card-hover"
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
         <Link to={`/video/${video.id}`} className="block">
           <div className="relative aspect-video overflow-hidden rounded-lg">
-            <img
-              src={video.thumbnail_url || "/placeholder.svg"}
-              alt={video.title}
-              className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
-              loading="lazy"
-            />
+            {showHoverPreview ? (
+              <video
+                src={hoverPreviewUrl || undefined}
+                muted
+                playsInline
+                autoPlay
+                loop
+                preload="metadata"
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <img
+                src={video.thumbnail_url || "/placeholder.svg"}
+                alt={video.title}
+                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
+                loading="lazy"
+              />
+            )}
             <div className="absolute inset-0 flex items-center justify-center bg-background/40 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
               <Play className="h-12 w-12 text-primary" fill="hsl(25 90% 55%)" />
             </div>

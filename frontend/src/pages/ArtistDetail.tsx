@@ -67,6 +67,12 @@ interface ArtistRecommendationsPage {
   has_more: boolean;
 }
 
+interface LastfmArtistSearchItem {
+  name: string;
+  image_url: string | null;
+  url: string | null;
+}
+
 function getResponsiveRecommendationLimit(): number {
   if (typeof window === "undefined") return 6;
   if (window.innerWidth < 640) return 2;
@@ -106,6 +112,10 @@ export default function ArtistDetail() {
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState("");
   const [editBio, setEditBio] = useState("");
+  const [editLastfmArtistName, setEditLastfmArtistName] = useState("");
+  const [lastfmSearchQuery, setLastfmSearchQuery] = useState("");
+  const [lastfmSearching, setLastfmSearching] = useState(false);
+  const [lastfmSearchResults, setLastfmSearchResults] = useState<LastfmArtistSearchItem[]>([]);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
   const [metadataSaving, setMetadataSaving] = useState(false);
@@ -177,6 +187,9 @@ export default function ArtistDetail() {
       const body: Record<string, unknown> = {};
       if (editName.trim() && editName.trim() !== artist?.name) body.name = editName.trim();
       if (editBio.trim() !== (artist?.bio || "")) body.bio = editBio.trim() || null;
+      if ((editLastfmArtistName.trim() || null) !== (artist?.lastfm_artist_name || null)) {
+        body.lastfm_artist_name = editLastfmArtistName.trim() || null;
+      }
       return api.patch(`/artists/${id}`, body);
     },
     onSuccess: () => {
@@ -188,11 +201,69 @@ export default function ArtistDetail() {
     onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to update")),
   });
 
+  const refreshMetadataMutation = useMutation({
+    mutationFn: () => api.post(`/artists/${id}/refresh-metadata`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["artist", id] });
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      toast.success("Artist info refresh completed");
+    },
+    onError: (error: unknown) =>
+      toast.error(getErrorMessage(error, "Failed to refresh artist metadata")),
+  });
+
   function openEdit() {
     if (artist) {
       setEditName(artist.name);
       setEditBio(parseArtistBio(artist.bio).body);
+      setEditLastfmArtistName(artist.lastfm_artist_name || "");
+      setLastfmSearchQuery(artist.lastfm_artist_name || artist.name);
+      setLastfmSearchResults([]);
       setEditOpen(true);
+    }
+  }
+
+  async function searchLastfmArtists() {
+    if (!isAdmin) return;
+    const query = lastfmSearchQuery.trim();
+    if (!query) {
+      toast.error("Enter an artist name to search Last.fm");
+      return;
+    }
+    setLastfmSearching(true);
+    try {
+      const results = await api.get<LastfmArtistSearchItem[]>(
+        `/artists/lastfm/search?q=${encodeURIComponent(query)}&limit=8`
+      );
+      setLastfmSearchResults(results);
+      if (results.length === 0) {
+        toast.info("No Last.fm matches found");
+      }
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to search Last.fm"));
+    } finally {
+      setLastfmSearching(false);
+    }
+  }
+
+  async function applyLastfmArtistMatch(artistName: string) {
+    if (!isAdmin) return;
+    try {
+      const updated = await api.post<{
+        lastfm_artist_name: string | null;
+        bio: string | null;
+      }>(`/artists/${id}/lastfm/apply`, {
+        lastfm_artist_name: artistName,
+      });
+      const matchedName = updated.lastfm_artist_name || artistName;
+      setEditLastfmArtistName(matchedName);
+      setLastfmSearchQuery(matchedName);
+      setEditBio(parseArtistBio(updated.bio).body);
+      queryClient.invalidateQueries({ queryKey: ["artist", id] });
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      toast.success("Last.fm match applied");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to apply Last.fm artist"));
     }
   }
 
@@ -550,8 +621,18 @@ export default function ArtistDetail() {
                 <Shuffle className="mr-1 h-4 w-4" /> Shuffle
               </Button>
               {isAdmin && (
-                <Button size="sm" variant="secondary" onClick={openMetadataEditor}>
+                <Button size="sm" variant="outline" onClick={openMetadataEditor}>
                   Edit MV Metadata
+                </Button>
+              )}
+              {isAdmin && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => refreshMetadataMutation.mutate()}
+                  disabled={refreshMetadataMutation.isPending}
+                >
+                  {refreshMetadataMutation.isPending ? "Refreshing..." : "Refresh Info"}
                 </Button>
               )}
             </div>
@@ -611,9 +692,9 @@ export default function ArtistDetail() {
                   key={item.id}
                   type="button"
                   onClick={() => navigate(`/artist/${item.id}`)}
-                  className="w-52 shrink-0 rounded-xl p-4 text-center transition-colors hover:bg-secondary/40"
+                  className="w-64 shrink-0 rounded-xl p-4 text-center transition-colors hover:bg-secondary/40"
                 >
-                  <div className="mx-auto mb-3 h-32 w-32 overflow-hidden rounded-full bg-secondary">
+                  <div className="mx-auto mb-3 h-40 w-40 overflow-hidden rounded-full bg-secondary">
                     {item.image_url ? (
                       <img
                         src={item.image_url}
@@ -660,12 +741,62 @@ export default function ArtistDetail() {
                   placeholder="Artist biography..."
                 />
               </div>
+              <div className="rounded-md border border-border p-3">
+                <label className="mb-1 block text-sm font-medium text-foreground">
+                  Match Artist from Last.fm
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    value={lastfmSearchQuery}
+                    onChange={(e) => setLastfmSearchQuery(e.target.value)}
+                    placeholder="Search Last.fm artist..."
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={searchLastfmArtists}
+                    disabled={lastfmSearching || !lastfmSearchQuery.trim()}
+                  >
+                    {lastfmSearching ? "Searching..." : "Search"}
+                  </Button>
+                </div>
+                {lastfmSearchResults.length > 0 && (
+                  <div className="mt-2 max-h-44 space-y-1 overflow-y-auto pr-1">
+                    {lastfmSearchResults.map((item) => (
+                      <button
+                        key={item.url || item.name}
+                        type="button"
+                        onClick={() => applyLastfmArtistMatch(item.name)}
+                        className="w-full rounded-md border border-border px-2 py-1.5 text-left transition-colors hover:bg-secondary"
+                      >
+                        <p className="truncate text-xs font-semibold text-foreground">{item.name}</p>
+                        {item.url && (
+                          <p className="truncate text-[11px] text-muted-foreground">{item.url}</p>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Matched artist: {editLastfmArtistName || "Not set"}
+                </p>
+              </div>
               <Button
                 onClick={() => editMutation.mutate()}
                 className="w-full"
                 disabled={editMutation.isPending || !editName.trim()}
               >
                 {editMutation.isPending ? "Saving..." : "Save Changes"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => refreshMetadataMutation.mutate()}
+                className="w-full"
+                disabled={refreshMetadataMutation.isPending}
+              >
+                {refreshMetadataMutation.isPending
+                  ? "Refreshing Info..."
+                  : "Refresh Info"}
               </Button>
             </div>
           </DialogContent>

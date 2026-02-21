@@ -37,8 +37,10 @@ interface ScanJob {
 
 interface RuntimeSettings {
   media_path: string;
+  app_data_path: string;
   transcoding_enabled: boolean;
   view_threshold_percent: number;
+  lastfm_override_local_artist_images: boolean;
 }
 
 interface ExportSettingItem {
@@ -73,11 +75,19 @@ interface ImportResponse {
 type VideoRecommendationSource = "lastfm" | "genre";
 
 const VIDEO_RECOMMENDATION_SOURCE_KEY = "videoRecommendationSource";
+const VIDEO_HOVER_PREVIEW_ENABLED_KEY = "videoHoverPreviewEnabled";
 
 function getStoredVideoRecommendationSource(): VideoRecommendationSource {
   if (typeof window === "undefined") return "lastfm";
   const value = window.localStorage.getItem(VIDEO_RECOMMENDATION_SOURCE_KEY);
   return value === "genre" ? "genre" : "lastfm";
+}
+
+function getStoredHoverPreviewEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  const value = window.localStorage.getItem(VIDEO_HOVER_PREVIEW_ENABLED_KEY);
+  if (value === null) return true;
+  return value === "1";
 }
 
 function getCookie(name: string): string | null {
@@ -101,15 +111,25 @@ export default function SettingsPage() {
   const [autoplay, setAutoplay] = useState(false);
   const [videoRecommendationSource, setVideoRecommendationSource] =
     useState<VideoRecommendationSource>(getStoredVideoRecommendationSource);
+  const [hoverPreviewEnabled, setHoverPreviewEnabled] = useState<boolean>(
+    getStoredHoverPreviewEnabled
+  );
 
   // Scan state
   const [scanJobId, setScanJobId] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<ScanJob | null>(null);
   const [scanning, setScanning] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [artistMetadataJobId, setArtistMetadataJobId] = useState<string | null>(null);
+  const [artistMetadataStatus, setArtistMetadataStatus] = useState<ScanJob | null>(null);
+  const [artistMetadataScanning, setArtistMetadataScanning] = useState(false);
+  const artistMetadataPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [mediaPath, setMediaPath] = useState("");
+  const [appDataPath, setAppDataPath] = useState("");
   const [transcodingEnabled, setTranscodingEnabled] = useState(false);
   const [viewThresholdPercent, setViewThresholdPercent] = useState(20);
+  const [lastfmOverrideLocalArtistImages, setLastfmOverrideLocalArtistImages] =
+    useState(true);
 
   const isAdmin = user?.role === "admin";
 
@@ -137,16 +157,22 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!runtimeSettings) return;
     setMediaPath(runtimeSettings.media_path);
+    setAppDataPath(runtimeSettings.app_data_path);
     setTranscodingEnabled(runtimeSettings.transcoding_enabled);
     setViewThresholdPercent(runtimeSettings.view_threshold_percent);
+    setLastfmOverrideLocalArtistImages(
+      runtimeSettings.lastfm_override_local_artist_images
+    );
   }, [runtimeSettings]);
 
   const runtimeMutation = useMutation({
     mutationFn: () =>
       api.put<RuntimeSettings>("/settings/runtime", {
         media_path: mediaPath,
+        app_data_path: appDataPath,
         transcoding_enabled: transcodingEnabled,
         view_threshold_percent: viewThresholdPercent,
+        lastfm_override_local_artist_images: lastfmOverrideLocalArtistImages,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
@@ -240,9 +266,34 @@ export default function SettingsPage() {
     }
   }, [queryClient]);
 
+  const pollArtistMetadataStatus = useCallback(async (jobId: string) => {
+    try {
+      const job = await api.get<ScanJob>(`/scan/jobs/${jobId}`);
+      setArtistMetadataStatus(job);
+      if (job.status === "completed" || job.status === "failed") {
+        setArtistMetadataScanning(false);
+        if (artistMetadataPollRef.current) {
+          clearInterval(artistMetadataPollRef.current);
+          artistMetadataPollRef.current = null;
+        }
+        queryClient.invalidateQueries({ queryKey: ["artists"] });
+        if (job.status === "completed") {
+          toast.success(
+            `Artist metadata refresh complete: ${job.files_found || 0} processed, ${job.files_added || 0} updated`
+          );
+        } else {
+          toast.error("Artist metadata refresh failed");
+        }
+      }
+    } catch {
+      // Keep polling
+    }
+  }, [queryClient]);
+
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      if (artistMetadataPollRef.current) clearInterval(artistMetadataPollRef.current);
     };
   }, []);
 
@@ -250,6 +301,14 @@ export default function SettingsPage() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(VIDEO_RECOMMENDATION_SOURCE_KEY, videoRecommendationSource);
   }, [videoRecommendationSource]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      VIDEO_HOVER_PREVIEW_ENABLED_KEY,
+      hoverPreviewEnabled ? "1" : "0"
+    );
+  }, [hoverPreviewEnabled]);
 
   async function handleScan() {
     if (scanning) return;
@@ -268,6 +327,24 @@ export default function SettingsPage() {
     } catch (error: unknown) {
       setScanning(false);
       toast.error(getErrorMessage(error, "Failed to start scan"));
+    }
+  }
+
+  async function handleArtistMetadataRefresh() {
+    if (artistMetadataScanning) return;
+    setArtistMetadataScanning(true);
+    setArtistMetadataStatus(null);
+
+    try {
+      const resp = await api.post<{ job_id: string; message: string }>("/scan/artist-metadata/run");
+      const jobId = resp.job_id;
+      setArtistMetadataJobId(jobId);
+
+      artistMetadataPollRef.current = setInterval(() => pollArtistMetadataStatus(jobId), 2000);
+      setTimeout(() => pollArtistMetadataStatus(jobId), 1000);
+    } catch (error: unknown) {
+      setArtistMetadataScanning(false);
+      toast.error(getErrorMessage(error, "Failed to start artist metadata refresh"));
     }
   }
 
@@ -296,20 +373,34 @@ export default function SettingsPage() {
               Scan your media directory for new artists, videos, and subtitles.
             </p>
 
-            <Button
-              onClick={handleScan}
-              disabled={scanning}
-              className="w-full"
-            >
-              {scanning ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Scanning...
-                </>
-              ) : (
-                "Scan Now"
-              )}
-            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button onClick={handleScan} disabled={scanning} className="w-full">
+                {scanning ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Scanning...
+                  </>
+                ) : (
+                  "Scan Now"
+                )}
+              </Button>
+
+              <Button
+                onClick={handleArtistMetadataRefresh}
+                disabled={artistMetadataScanning}
+                variant="secondary"
+                className="w-full"
+              >
+                {artistMetadataScanning ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Refreshing Artist Metadata...
+                  </>
+                ) : (
+                  "Refresh Artist Bio + Images"
+                )}
+              </Button>
+            </div>
 
             {/* Scan progress */}
             {scanning && (
@@ -383,6 +474,81 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+
+            {/* Artist metadata refresh progress */}
+            {artistMetadataScanning && (
+              <div className="space-y-2 rounded-lg border border-border p-3">
+                <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                  {artistMetadataStatus?.folders_total && artistMetadataStatus.folders_total > 0 ? (
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-500"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.round(
+                            ((artistMetadataStatus.folders_processed || 0) /
+                              artistMetadataStatus.folders_total) *
+                              100
+                          )
+                        )}%`,
+                      }}
+                    />
+                  ) : (
+                    <div className="h-full animate-pulse rounded-full bg-primary" style={{ width: "100%" }} />
+                  )}
+                </div>
+                {artistMetadataStatus?.status === "running" ? (
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    <p>
+                      {artistMetadataStatus.current_folder
+                        ? `Refreshing artist: ${artistMetadataStatus.current_folder}`
+                        : "Refreshing artist metadata..."}
+                    </p>
+                    {artistMetadataStatus.folders_total && artistMetadataStatus.folders_total > 0 && (
+                      <p>
+                        Progress: {artistMetadataStatus.folders_processed || 0}/
+                        {artistMetadataStatus.folders_total} artists
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Starting artist metadata refresh...</p>
+                )}
+              </div>
+            )}
+
+            {!artistMetadataScanning && artistMetadataStatus && (
+              <div
+                className={`flex items-start gap-3 rounded-lg border p-4 ${
+                  artistMetadataStatus.status === "completed"
+                    ? "border-green-500/30 bg-green-500/5"
+                    : "border-destructive/30 bg-destructive/5"
+                }`}
+              >
+                {artistMetadataStatus.status === "completed" ? (
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-500" />
+                ) : (
+                  <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+                )}
+                <div className="text-sm">
+                  {artistMetadataStatus.status === "completed" ? (
+                    <>
+                      <p className="font-medium text-foreground">Artist metadata refresh complete</p>
+                      <p className="text-muted-foreground">
+                        Processed {artistMetadataStatus.files_found || 0} artists, updated {artistMetadataStatus.files_added || 0}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-medium text-destructive">Artist metadata refresh failed</p>
+                      {artistMetadataStatus.errors && (
+                        <p className="text-muted-foreground">{artistMetadataStatus.errors}</p>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -400,6 +566,15 @@ export default function SettingsPage() {
                     value={mediaPath}
                     onChange={(e) => setMediaPath(e.target.value)}
                     placeholder="/path/to/media"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="app-data-path">App data folder path</Label>
+                  <Input
+                    id="app-data-path"
+                    value={appDataPath}
+                    onChange={(e) => setAppDataPath(e.target.value)}
+                    placeholder="/path/to/app-data"
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -427,11 +602,26 @@ export default function SettingsPage() {
                     A playback counts as a view after this watch percentage. Playback history still records every session.
                   </p>
                 </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <Label htmlFor="lastfm-override-local-artist-images">
+                      Override local artist images on Last.fm update
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      If enabled, Last.fm refresh can replace manually uploaded local artist images.
+                    </p>
+                  </div>
+                  <Switch
+                    id="lastfm-override-local-artist-images"
+                    checked={lastfmOverrideLocalArtistImages}
+                    onCheckedChange={setLastfmOverrideLocalArtistImages}
+                  />
+                </div>
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
                     onClick={() => runtimeMutation.mutate()}
-                    disabled={runtimeMutation.isPending || !mediaPath.trim()}
+                    disabled={runtimeMutation.isPending || !mediaPath.trim() || !appDataPath.trim()}
                   >
                     {runtimeMutation.isPending ? "Saving..." : "Save Runtime Settings"}
                   </Button>
@@ -509,6 +699,19 @@ export default function SettingsPage() {
               <p className="text-xs text-muted-foreground">
                 Controls how recommended music videos are generated in the player.
               </p>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <Label htmlFor="hover-preview-enabled">Hover video previews</Label>
+                <p className="text-xs text-muted-foreground">
+                  Autoplay muted preview on thumbnail hover. Hover previews do not affect history or views.
+                </p>
+              </div>
+              <Switch
+                id="hover-preview-enabled"
+                checked={hoverPreviewEnabled}
+                onCheckedChange={setHoverPreviewEnabled}
+              />
             </div>
           </section>
 

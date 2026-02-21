@@ -14,6 +14,7 @@ import ArtistDetail from "./pages/ArtistDetail";
 import VideoPlayer from "./pages/VideoPlayer";
 import SettingsPage from "./pages/SettingsPage";
 import ProfilePage from "./pages/ProfilePage";
+import ProfileStatsRankingsPage from "./pages/ProfileStatsRankingsPage";
 import SearchPage from "./pages/SearchPage";
 import WatchlistsPage from "./pages/WatchlistsPage";
 import WatchlistDetail from "./pages/WatchlistDetail";
@@ -54,6 +55,7 @@ const App = () => (
                 <Route path="/watchlists/:id" element={<WatchlistDetail />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
+                <Route path="/profile/stats-rankings" element={<ProfileStatsRankingsPage />} />
                 <Route path="*" element={<NotFound />} />
               </Route>
             </Routes>
