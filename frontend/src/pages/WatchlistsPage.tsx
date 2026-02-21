@@ -16,6 +16,8 @@ import { Plus, ListVideo, Trash2, Pencil, LayoutGrid, List } from "lucide-react"
 import { toast } from "sonner";
 import type { MusicVideo } from "@/data/mockData";
 
+const WATCHLIST_VIEW_MODE_KEY = "popinn.watchlists.viewMode";
+
 interface WatchlistItem {
   id: string;
   name: string;
@@ -45,7 +47,14 @@ export default function WatchlistsPage() {
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [viewMode, setViewMode] = useState<"list" | "cards">("list");
+  const [viewMode, setViewMode] = useState<"list" | "cards">(() => {
+    try {
+      const stored = localStorage.getItem(WATCHLIST_VIEW_MODE_KEY);
+      return stored === "cards" ? "cards" : "list";
+    } catch {
+      return "list";
+    }
+  });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -107,6 +116,15 @@ export default function WatchlistsPage() {
     onError: () => toast.error("Failed to delete watchlist"),
   });
 
+  function handleViewModeChange(mode: "list" | "cards") {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(WATCHLIST_VIEW_MODE_KEY, mode);
+    } catch {
+      // Ignore storage errors; UI should still work for current session.
+    }
+  }
+
   function handleCreate() {
     const name = newName.trim();
     if (!name) return;
@@ -128,7 +146,7 @@ export default function WatchlistsPage() {
             <div className="flex items-center rounded-md border border-border bg-card p-0.5">
               <button
                 type="button"
-                onClick={() => setViewMode("list")}
+                onClick={() => handleViewModeChange("list")}
                 className={`rounded px-2 py-1 transition-colors ${
                   viewMode === "list"
                     ? "bg-primary text-primary-foreground"
@@ -140,7 +158,7 @@ export default function WatchlistsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setViewMode("cards")}
+                onClick={() => handleViewModeChange("cards")}
                 className={`rounded px-2 py-1 transition-colors ${
                   viewMode === "cards"
                     ? "bg-primary text-primary-foreground"

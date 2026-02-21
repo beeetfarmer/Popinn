@@ -20,6 +20,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useQueue } from "@/contexts/QueueContext";
 
 const PER_PAGE = 10;
+const LASTFM_ATTRIBUTION_FOOTER_REGEX =
+  /\n*\s*Artist information powered by Last\.fm\s*\n*Last\.fm:\s*(https?:\/\/www\.last\.fm\/music\/\S+)\s*$/i;
 
 interface SpotifyTrackMatch {
   spotify_track_id: string;
@@ -44,6 +46,15 @@ interface MetadataRow {
   spotifyQuery: string;
   spotifySearching: boolean;
   spotifyResults: SpotifyTrackMatch[];
+  showMatchOptions: boolean;
+}
+
+function parseArtistBio(rawBio: string | null | undefined): { body: string; lastfmUrl: string | null } {
+  const text = rawBio || "";
+  const match = text.match(LASTFM_ATTRIBUTION_FOOTER_REGEX);
+  const lastfmUrl = match?.[1] || null;
+  const body = text.replace(LASTFM_ATTRIBUTION_FOOTER_REGEX, "").trim();
+  return { body, lastfmUrl };
 }
 
 function getCookie(name: string): string | null {
@@ -68,6 +79,7 @@ export default function ArtistDetail() {
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
   const [metadataSaving, setMetadataSaving] = useState(false);
+  const [searchAllRunning, setSearchAllRunning] = useState(false);
   const [page, setPage] = useState(1);
 
   const { data: artist, isLoading, isError } = useQuery<ArtistDetailType>({
@@ -122,7 +134,7 @@ export default function ArtistDetail() {
   function openEdit() {
     if (artist) {
       setEditName(artist.name);
-      setEditBio(artist.bio || "");
+      setEditBio(parseArtistBio(artist.bio).body);
       setEditOpen(true);
     }
   }
@@ -143,6 +155,7 @@ export default function ArtistDetail() {
         spotifyQuery: video.title,
         spotifySearching: false,
         spotifyResults: [],
+        showMatchOptions: false,
       }))
     );
     setMetadataOpen(true);
@@ -156,7 +169,9 @@ export default function ArtistDetail() {
     setMetadataRows((prev) =>
       prev.map((row) =>
         row.videoId === videoId
-          ? { ...row, [field]: value }
+          ? field === "spotifyQuery"
+            ? { ...row, spotifyQuery: value, showMatchOptions: false, spotifyResults: [] }
+            : { ...row, [field]: value }
           : row
       )
     );
@@ -183,7 +198,12 @@ export default function ArtistDetail() {
       setMetadataRows((prev) =>
         prev.map((item) =>
           item.videoId === videoId
-            ? { ...item, spotifySearching: false, spotifyResults: results }
+            ? {
+                ...item,
+                spotifySearching: false,
+                spotifyResults: results,
+                showMatchOptions: true,
+              }
             : item
         )
       );
@@ -194,7 +214,7 @@ export default function ArtistDetail() {
       setMetadataRows((prev) =>
         prev.map((item) =>
           item.videoId === videoId
-            ? { ...item, spotifySearching: false }
+            ? { ...item, spotifySearching: false, showMatchOptions: false }
             : item
         )
       );
@@ -263,6 +283,67 @@ export default function ArtistDetail() {
     }
   }
 
+  async function searchSpotifyForAllRows() {
+    if (!artist || metadataRows.length === 0) return;
+    setSearchAllRunning(true);
+    setMetadataRows((prev) => prev.map((row) => ({ ...row, spotifySearching: true })));
+
+    try {
+      const resultsByVideoId = await Promise.all(
+        metadataRows.map(async (row) => {
+          const query = row.spotifyQuery.trim() || row.title.trim();
+          if (!query) {
+            return { videoId: row.videoId, results: [] as SpotifyTrackMatch[] };
+          }
+          try {
+            const results = await api.get<SpotifyTrackMatch[]>(
+              `/videos/spotify/search?q=${encodeURIComponent(query)}&artist_name=${encodeURIComponent(artist.name)}&limit=8`
+            );
+            return { videoId: row.videoId, results };
+          } catch {
+            return { videoId: row.videoId, results: [] as SpotifyTrackMatch[] };
+          }
+        })
+      );
+
+      const resultMap = new Map(resultsByVideoId.map((item) => [item.videoId, item.results]));
+      const updatedRows = metadataRows.map((row) => {
+        const results = resultMap.get(row.videoId) || [];
+        const first = results[0];
+        if (!first) {
+          return {
+            ...row,
+            spotifySearching: false,
+            spotifyResults: results,
+            showMatchOptions: false,
+          };
+        }
+        return {
+          ...row,
+          title: first.title || row.title,
+          album: first.album || "",
+          year: first.year ? String(first.year) : "",
+          genre: first.genre || "",
+          spotifyQuery: first.title || row.spotifyQuery,
+          spotifySearching: false,
+          spotifyResults: results,
+          showMatchOptions: false,
+        };
+      });
+      const filledCount = updatedRows.filter((row) => row.spotifyResults.length > 0).length;
+      const noMatchCount = updatedRows.length - filledCount;
+
+      setMetadataRows(updatedRows);
+
+      toast.success(`Search all complete. Filled ${filledCount} video${filledCount !== 1 ? "s" : ""}.`);
+      if (noMatchCount > 0) {
+        toast.info(`No Spotify match for ${noMatchCount} video${noMatchCount !== 1 ? "s" : ""}.`);
+      }
+    } finally {
+      setSearchAllRunning(false);
+    }
+  }
+
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
@@ -295,6 +376,7 @@ export default function ArtistDetail() {
   const totalPages = Math.max(1, Math.ceil(artist.videos.length / PER_PAGE));
   const start = (page - 1) * PER_PAGE;
   const paginatedVideos = artist.videos.slice(start, start + PER_PAGE);
+  const parsedBio = parseArtistBio(artist.bio);
 
   function startArtistQueue(shuffleQueue: boolean) {
     if (artist.videos.length === 0) {
@@ -381,9 +463,22 @@ export default function ArtistDetail() {
                 </button>
               )}
             </div>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
-              {artist.bio}
+            <p className="mt-2 max-w-xl whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+              {parsedBio.body || "No artist bio available."}
             </p>
+            {parsedBio.lastfmUrl && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Artist information powered by Last.fm ·{" "}
+                <a
+                  href={parsedBio.lastfmUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  Last.fm artist page
+                </a>
+              </p>
+            )}
             <p className="mt-3 text-xs text-muted-foreground">
               {artist.videos.length} music video{artist.videos.length !== 1 && "s"}
             </p>
@@ -479,6 +574,16 @@ export default function ArtistDetail() {
                 <p className="text-sm text-muted-foreground">
                   Match each music video with a Spotify track to autofill title, album, release year, and genre.
                 </p>
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={searchSpotifyForAllRows}
+                    disabled={searchAllRunning}
+                  >
+                    {searchAllRunning ? "Searching All..." : "Search All"}
+                  </Button>
+                </div>
                 <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
                   {metadataRows.map((row) => (
                     <div key={row.videoId} className="rounded-lg border border-border p-3">
@@ -500,7 +605,7 @@ export default function ArtistDetail() {
                           {row.spotifySearching ? "Searching..." : "Search"}
                         </Button>
                       </div>
-                      {row.spotifyResults.length > 0 && (
+                      {row.showMatchOptions && row.spotifyResults.length > 0 && (
                         <div className="mt-2 max-h-36 space-y-1 overflow-y-auto pr-1">
                           {row.spotifyResults.map((item) => (
                             <button
