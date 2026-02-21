@@ -37,6 +37,14 @@ class ScanResult:
     errors: list[str] = field(default_factory=list)
 
 
+def _is_within_root(path: str | Path, root: Path) -> bool:
+    try:
+        Path(path).resolve(strict=False).relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _find_or_create_artist(session: Session, folder_name: str) -> tuple[Artist, bool]:
     """Find an existing artist or create a new one. Returns (artist, is_new).
 
@@ -154,6 +162,7 @@ def _process_subtitles(
     session: Session,
     artist_dir: str,
     video_map: dict[str, Video],
+    media_root: Path,
 ) -> None:
     """Find subtitle files and link them to matching videos.
 
@@ -163,7 +172,9 @@ def _process_subtitles(
     import re
 
     for entry in os.scandir(artist_dir):
-        if not entry.is_file():
+        if not entry.is_file(follow_symlinks=False):
+            continue
+        if not _is_within_root(entry.path, media_root):
             continue
         ext = Path(entry.name).suffix.lower()
         if ext not in SUBTITLE_EXTENSIONS:
@@ -208,11 +219,12 @@ def _process_subtitles(
 
 def _soft_delete_missing(session: Session, media_path: str) -> None:
     """Soft-delete videos whose files no longer exist on disk."""
+    media_root = Path(media_path).resolve(strict=False)
     result = session.execute(
         select(Video).where(Video.deleted_at.is_(None))
     )
     for video in result.scalars():
-        if not os.path.exists(video.file_path):
+        if not _is_within_root(video.file_path, media_root) or not os.path.exists(video.file_path):
             video.deleted_at = datetime.now(timezone.utc)
     session.flush()
 
@@ -230,6 +242,7 @@ def run_scan(
 ) -> ScanResult:
     """Walk media_path and sync all artists/videos/subtitles to the DB."""
     result = ScanResult()
+    media_root = Path(media_path).resolve(strict=False)
     thumbnail_dir = os.path.join(app_data_path, thumbnail_dir)
     preview_dir = os.path.join(app_data_path, preview_dir)
     os.makedirs(thumbnail_dir, exist_ok=True)
@@ -237,11 +250,15 @@ def run_scan(
 
     with session_factory() as session:
         try:
-            artist_entries = [
-                entry
-                for entry in sorted(os.scandir(media_path), key=lambda e: e.name)
-                if entry.is_dir() and not entry.name.startswith(".")
-            ]
+            artist_entries = []
+            for entry in sorted(os.scandir(media_path), key=lambda e: e.name):
+                if entry.name.startswith("."):
+                    continue
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                if not _is_within_root(entry.path, media_root):
+                    continue
+                artist_entries.append(entry)
             folders_total = len(artist_entries)
             if progress_callback:
                 progress_callback(folders_total, 0, None, result.files_found, result.files_added)
@@ -325,7 +342,9 @@ def run_scan(
                 video_map: dict[str, Video] = {}
                 artist_added_count = 0
                 for fentry in sorted(os.scandir(entry.path), key=lambda e: e.name):
-                    if not fentry.is_file():
+                    if not fentry.is_file(follow_symlinks=False):
+                        continue
+                    if not _is_within_root(fentry.path, media_root):
                         continue
                     ext = Path(fentry.name).suffix.lower()
                     if ext not in VIDEO_EXTENSIONS:
@@ -369,7 +388,7 @@ def run_scan(
                     session.flush()
 
                 # Process subtitles for this artist folder
-                _process_subtitles(session, entry.path, video_map)
+                _process_subtitles(session, entry.path, video_map, media_root)
 
                 if progress_callback:
                     progress_callback(

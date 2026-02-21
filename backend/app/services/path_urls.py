@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Callable
 
 
 def is_external_url(value: str | None) -> bool:
@@ -15,6 +16,7 @@ def to_public_asset_url(
     media_root: str,
     app_data_root: str,
     cache_bust: bool = False,
+    signer: Callable[[str], str] | None = None,
 ) -> str | None:
     if not abs_path_or_url:
         return None
@@ -41,6 +43,8 @@ def to_public_asset_url(
                 url += f"?v={mtime}"
             except OSError:
                 pass
+        if signer:
+            url = signer(url)
         return url
 
     return None

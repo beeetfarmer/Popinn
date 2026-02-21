@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.schemas.video import VideoRead
 
@@ -24,6 +24,7 @@ class ArtistUpdate(BaseModel):
     lastfm_artist_name: str | None = None
     bio: str | None = None
     image_url: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class ArtistDetailRead(ArtistRead):
@@ -49,3 +50,4 @@ class LastfmArtistSearchItem(BaseModel):
 
 class LastfmArtistApplyRequest(BaseModel):
     lastfm_artist_name: str
+    model_config = ConfigDict(extra="forbid")

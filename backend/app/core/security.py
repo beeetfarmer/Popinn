@@ -25,6 +25,7 @@ def create_access_token(user_id: uuid.UUID, role: str) -> str:
         "sub": str(user_id),
         "role": role,
         "type": "access",
+        "jti": str(uuid.uuid4()),
         "exp": expire,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
@@ -37,6 +38,7 @@ def create_refresh_token(user_id: uuid.UUID) -> str:
     payload = {
         "sub": str(user_id),
         "type": "refresh",
+        "jti": str(uuid.uuid4()),
         "exp": expire,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
@@ -47,3 +49,14 @@ def decode_token(token: str) -> dict | None:
         return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
+
+
+def exp_claim_to_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, ValueError):
+            return None
+    return None

@@ -27,23 +27,40 @@ from app.services.runtime_settings import (
     get_effective_media_path,
     get_effective_transcoding_enabled,
 )
+from app.services.stream_tokens import sign_stream_url_for_user
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
 
-def _asset_url(abs_path_or_url: str | None, media_root: str, app_data_root: str) -> str | None:
+def _asset_url(
+    abs_path_or_url: str | None,
+    media_root: str,
+    app_data_root: str,
+    user_id: uuid.UUID | None = None,
+) -> str | None:
+    signer = None
+    if user_id is not None:
+        signer = lambda url: sign_stream_url_for_user(url, user_id) or url
     return to_public_asset_url(
         abs_path_or_url,
         media_root=media_root,
         app_data_root=app_data_root,
+        signer=signer,
     )
 
 
-def _hls_playlist_url(video_id: uuid.UUID, app_data_root: str) -> str | None:
+def _hls_playlist_url(
+    video_id: uuid.UUID,
+    app_data_root: str,
+    user_id: uuid.UUID | None = None,
+) -> str | None:
     playlist = Path(app_data_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
     if not playlist.exists():
         return None
-    return f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8"
+    url = f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8"
+    if user_id is not None:
+        return sign_stream_url_for_user(url, user_id)
+    return url
 
 
 def _video_to_read(
@@ -51,9 +68,12 @@ def _video_to_read(
     media_root: str,
     app_data_root: str,
     transcoding_enabled: bool,
+    user_id: uuid.UUID | None = None,
 ) -> VideoRead:
-    video_url = _asset_url(video.file_path, media_root, app_data_root)
-    hls_url = _hls_playlist_url(video.id, app_data_root) if transcoding_enabled else None
+    video_url = _asset_url(video.file_path, media_root, app_data_root, user_id)
+    hls_url = (
+        _hls_playlist_url(video.id, app_data_root, user_id) if transcoding_enabled else None
+    )
     return VideoRead(
         id=video.id,
         title=video.title,
@@ -61,8 +81,8 @@ def _video_to_read(
         artist_name=video.artist.name if video.artist else "",
         album=video.album,
         duration=video.duration,
-        thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root),
-        preview_url=_asset_url(video.preview_path, media_root, app_data_root),
+        thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root, user_id),
+        preview_url=_asset_url(video.preview_path, media_root, app_data_root, user_id),
         video_url=video_url,
         playback_url=hls_url or video_url,
         year=video.year,
@@ -175,7 +195,13 @@ async def get_watchlist(
     app_data_root = await get_effective_app_data_path(db)
     transcoding_enabled = await get_effective_transcoding_enabled(db)
     videos = [
-        _video_to_read(item.video, media_root, app_data_root, transcoding_enabled)
+        _video_to_read(
+            item.video,
+            media_root,
+            app_data_root,
+            transcoding_enabled,
+            user.id,
+        )
         for item in watchlist.items
         if item.video and item.video.deleted_at is None
     ]

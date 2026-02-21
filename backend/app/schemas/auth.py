@@ -12,15 +12,18 @@ class UserRegister(BaseModel):
     )
     email: EmailStr
     password: str = Field(min_length=8)
+    model_config = ConfigDict(extra="forbid")
 
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+    model_config = ConfigDict(extra="forbid")
 
 
 class TokenRefresh(BaseModel):
     refresh_token: str
+    model_config = ConfigDict(extra="forbid")
 
 
 class TokenPair(BaseModel):
@@ -34,6 +37,7 @@ class UserUpdate(BaseModel):
     email: EmailStr | None = None
     new_password: str | None = Field(None, min_length=8)
     current_password: str
+    model_config = ConfigDict(extra="forbid")
 
 
 class UserRead(BaseModel):

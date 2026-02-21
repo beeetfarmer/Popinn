@@ -9,8 +9,44 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.models.user import User, UserRole
+from app.services.token_revocation import is_token_payload_revoked
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def extract_access_token_from_request(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = None,
+) -> str | None:
+    if credentials and credentials.credentials:
+        return credentials.credentials
+    cookie_token = request.cookies.get(settings.ACCESS_COOKIE_NAME)
+    if cookie_token:
+        return cookie_token
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+        return token or None
+    return None
+
+
+async def get_user_from_access_token(token: str, db: AsyncSession) -> User | None:
+    payload = decode_token(token)
+    if payload is None or payload.get("type") != "access":
+        return None
+    if await is_token_payload_revoked(payload, expected_type="access", db=db):
+        return None
+
+    try:
+        user_id = uuid.UUID(payload["sub"])
+    except (KeyError, ValueError):
+        return None
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        return None
+    return user
 
 
 async def get_current_user(
@@ -18,40 +54,17 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    token: str | None = None
-    if credentials:
-        token = credentials.credentials
-    if not token:
-        token = request.cookies.get(settings.ACCESS_COOKIE_NAME)
-
+    token = extract_access_token_from_request(request, credentials)
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing authentication token",
         )
-    payload = decode_token(token)
-
-    if payload is None or payload.get("type") != "access":
+    user = await get_user_from_access_token(token, db)
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
-        )
-
-    try:
-        user_id = uuid.UUID(payload["sub"])
-    except (KeyError, ValueError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
-
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if user is None or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
         )
 
     return user

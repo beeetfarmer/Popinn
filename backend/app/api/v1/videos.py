@@ -37,6 +37,7 @@ from app.services.runtime_settings import (
     get_effective_transcoding_enabled,
     get_effective_view_threshold_ratio,
 )
+from app.services.stream_tokens import sign_stream_url_for_user
 from app.services.spotify import (
     SpotifyRateLimitError,
     SpotifyServiceError,
@@ -54,19 +55,35 @@ SORTABLE_COLUMNS = {
 }
 
 
-def _asset_url(abs_path_or_url: str | None, media_root: str, app_data_root: str) -> str | None:
+def _asset_url(
+    abs_path_or_url: str | None,
+    media_root: str,
+    app_data_root: str,
+    user_id: uuid.UUID | None = None,
+) -> str | None:
+    signer = None
+    if user_id is not None:
+        signer = lambda url: sign_stream_url_for_user(url, user_id) or url
     return to_public_asset_url(
         abs_path_or_url,
         media_root=media_root,
         app_data_root=app_data_root,
+        signer=signer,
     )
 
 
-def _hls_playlist_url(video_id: uuid.UUID, app_data_root: str) -> str | None:
+def _hls_playlist_url(
+    video_id: uuid.UUID,
+    app_data_root: str,
+    user_id: uuid.UUID | None = None,
+) -> str | None:
     playlist = Path(app_data_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
     if not playlist.exists():
         return None
-    return f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8"
+    url = f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8"
+    if user_id is not None:
+        return sign_stream_url_for_user(url, user_id)
+    return url
 
 
 def _video_to_read(
@@ -75,9 +92,12 @@ def _video_to_read(
     media_root: str,
     app_data_root: str,
     transcoding_enabled: bool,
+    user_id: uuid.UUID | None = None,
 ) -> VideoRead:
-    video_url = _asset_url(video.file_path, media_root, app_data_root)
-    hls_url = _hls_playlist_url(video.id, app_data_root) if transcoding_enabled else None
+    video_url = _asset_url(video.file_path, media_root, app_data_root, user_id)
+    hls_url = (
+        _hls_playlist_url(video.id, app_data_root, user_id) if transcoding_enabled else None
+    )
     return VideoRead(
         id=video.id,
         title=video.title,
@@ -85,8 +105,8 @@ def _video_to_read(
         artist_name=artist_name,
         album=video.album,
         duration=video.duration,
-        thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root),
-        preview_url=_asset_url(video.preview_path, media_root, app_data_root),
+        thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root, user_id),
+        preview_url=_asset_url(video.preview_path, media_root, app_data_root, user_id),
         video_url=video_url,
         playback_url=hls_url or video_url,
         year=video.year,
@@ -100,10 +120,11 @@ def _video_to_read(
 async def list_videos(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    search: str | None = Query(None),
+    search: str | None = Query(None, max_length=200),
     artist_id: uuid.UUID | None = Query(None),
     sort_by: str = Query("added_at"),
     sort_order: str = Query("desc"),
+    _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Video).where(Video.deleted_at.is_(None)).options(selectinload(Video.artist))
@@ -129,6 +150,7 @@ async def list_videos(
             media_root,
             app_data_root,
             transcoding_enabled,
+            _user.id,
         )
         for v in videos
     ]
@@ -136,8 +158,8 @@ async def list_videos(
 
 @router.get("/spotify/search", response_model=list[SpotifyTrackMatch])
 async def search_spotify_tracks(
-    q: str = Query(..., min_length=1),
-    artist_name: str | None = Query(None),
+    q: str = Query(..., min_length=1, max_length=200),
+    artist_name: str | None = Query(None, max_length=120),
     limit: int = Query(10, ge=1, le=20),
     _admin: User = Depends(get_current_admin),
 ):
@@ -290,6 +312,7 @@ async def get_video_recommendations(
                 media_root,
                 app_data_root,
                 transcoding_enabled,
+                _user.id,
             ),
             lastfm_match=score,
         )
@@ -304,7 +327,11 @@ async def get_video_recommendations(
 
 
 @router.get("/{video_id}", response_model=VideoRead)
-async def get_video(video_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_video(
+    video_id: uuid.UUID,
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
         select(Video)
         .where(Video.id == video_id, Video.deleted_at.is_(None))
@@ -323,6 +350,7 @@ async def get_video(video_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         media_root,
         app_data_root,
         transcoding_enabled,
+        _user.id,
     )
 
 
@@ -404,7 +432,7 @@ async def get_video_play_stats(
 async def update_video(
     video_id: uuid.UUID,
     body: VideoUpdate,
-    _admin: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -431,6 +459,7 @@ async def update_video(
         media_root,
         app_data_root,
         transcoding_enabled,
+        admin.id,
     )
 
 

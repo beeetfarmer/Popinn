@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, ConfigDict, computed_field
 
 
 class VideoRead(BaseModel):
@@ -36,15 +36,18 @@ class VideoUpdate(BaseModel):
     album: str | None = None
     year: int | None = None
     genre: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class VideoBulkDelete(BaseModel):
     video_ids: list[uuid.UUID]
+    model_config = ConfigDict(extra="forbid")
 
 
 class VideoPlayCreate(BaseModel):
     watched_seconds: float
     video_duration_seconds: int | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class VideoPlayRead(BaseModel):

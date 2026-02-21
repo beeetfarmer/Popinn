@@ -9,9 +9,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_admin
+from app.api.deps import get_current_admin, get_current_user
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.uploads import read_upload_limited
 from app.models.artist import Artist
 from app.models.playback import VideoPlay
 from app.models.user import User
@@ -39,8 +40,10 @@ from app.services.runtime_settings import (
     get_effective_media_path,
     get_effective_transcoding_enabled,
 )
+from app.services.stream_tokens import sign_stream_url_for_user
 
 router = APIRouter(prefix="/artists", tags=["artists"])
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
 def _asset_url(
@@ -49,20 +52,32 @@ def _asset_url(
     app_data_root: str,
     *,
     cache_bust: bool = False,
+    user_id: uuid.UUID | None = None,
 ) -> str | None:
+    signer = None
+    if user_id is not None:
+        signer = lambda url: sign_stream_url_for_user(url, user_id) or url
     return to_public_asset_url(
         abs_path_or_url,
         media_root=media_root,
         app_data_root=app_data_root,
         cache_bust=cache_bust,
+        signer=signer,
     )
 
 
-def _hls_playlist_url(video_id: uuid.UUID, app_data_root: str) -> str | None:
+def _hls_playlist_url(
+    video_id: uuid.UUID,
+    app_data_root: str,
+    user_id: uuid.UUID | None = None,
+) -> str | None:
     playlist = Path(app_data_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
     if not playlist.exists():
         return None
-    return f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8"
+    url = f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8"
+    if user_id is not None:
+        return sign_stream_url_for_user(url, user_id)
+    return url
 
 
 def _video_to_read(
@@ -71,9 +86,12 @@ def _video_to_read(
     media_root: str,
     app_data_root: str,
     transcoding_enabled: bool,
+    user_id: uuid.UUID | None = None,
 ) -> VideoRead:
-    video_url = _asset_url(video.file_path, media_root, app_data_root)
-    hls_url = _hls_playlist_url(video.id, app_data_root) if transcoding_enabled else None
+    video_url = _asset_url(video.file_path, media_root, app_data_root, user_id=user_id)
+    hls_url = (
+        _hls_playlist_url(video.id, app_data_root, user_id=user_id) if transcoding_enabled else None
+    )
     return VideoRead(
         id=video.id,
         title=video.title,
@@ -81,8 +99,8 @@ def _video_to_read(
         artist_name=artist_name,
         album=video.album,
         duration=video.duration,
-        thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root),
-        preview_url=_asset_url(video.preview_path, media_root, app_data_root),
+        thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root, user_id=user_id),
+        preview_url=_asset_url(video.preview_path, media_root, app_data_root, user_id=user_id),
         video_url=video_url,
         playback_url=hls_url or video_url,
         year=video.year,
@@ -96,7 +114,8 @@ def _video_to_read(
 async def list_artists(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    search: str | None = Query(None),
+    search: str | None = Query(None, max_length=200),
+    _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     query = (
@@ -126,6 +145,7 @@ async def list_artists(
                 media_root,
                 app_data_root,
                 cache_bust=True,
+                user_id=_user.id,
             ),
             video_count=count,
             created_at=artist.created_at,
@@ -136,7 +156,7 @@ async def list_artists(
 
 @router.get("/lastfm/search", response_model=list[LastfmArtistSearchItem])
 async def search_lastfm_artists(
-    q: str = Query(..., min_length=1),
+    q: str = Query(..., min_length=1, max_length=200),
     limit: int = Query(10, ge=1, le=20),
     _admin: User = Depends(get_current_admin),
 ):
@@ -162,7 +182,7 @@ async def search_lastfm_artists(
 async def apply_lastfm_artist_match(
     artist_id: uuid.UUID,
     body: LastfmArtistApplyRequest,
-    _admin: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -223,6 +243,7 @@ async def apply_lastfm_artist_match(
             media_root,
             app_data_root,
             cache_bust=True,
+            user_id=admin.id,
         ),
         video_count=video_count,
         created_at=artist.created_at,
@@ -230,7 +251,11 @@ async def apply_lastfm_artist_match(
 
 
 @router.get("/{artist_id}", response_model=ArtistDetailRead)
-async def get_artist(artist_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_artist(
+    artist_id: uuid.UUID,
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
         select(Artist)
         .where(Artist.id == artist_id, Artist.deleted_at.is_(None))
@@ -264,12 +289,20 @@ async def get_artist(artist_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
             media_root,
             app_data_root,
             cache_bust=True,
+            user_id=_user.id,
         ),
         video_count=len(active_videos),
         play_count=play_count,
         created_at=artist.created_at,
         videos=[
-            _video_to_read(v, artist.name, media_root, app_data_root, transcoding_enabled)
+            _video_to_read(
+                v,
+                artist.name,
+                media_root,
+                app_data_root,
+                transcoding_enabled,
+                _user.id,
+            )
             for v in active_videos
         ],
     )
@@ -280,6 +313,7 @@ async def get_artist_recommendations(
     artist_id: uuid.UUID,
     offset: int = Query(0, ge=0),
     limit: int = Query(12, ge=1, le=50),
+    _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     artist = await db.scalar(
@@ -356,6 +390,7 @@ async def get_artist_recommendations(
                 media_root,
                 app_data_root,
                 cache_bust=True,
+                user_id=_user.id,
             ),
             video_count=video_count_map.get(row.id, 0),
             play_count=0,
@@ -377,7 +412,7 @@ async def get_artist_recommendations(
 async def update_artist(
     artist_id: uuid.UUID,
     body: ArtistUpdate,
-    _admin: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(Artist).where(Artist.id == artist_id, Artist.deleted_at.is_(None)))
@@ -390,6 +425,11 @@ async def update_artist(
     for field, value in update_data.items():
         setattr(artist, field, value)
     if image_url is not None:
+        if image_url and not is_external_url(image_url):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Artist image URL must be an http(s) URL",
+            )
         artist.image_path = image_url or None
 
     await db.commit()
@@ -412,6 +452,7 @@ async def update_artist(
             media_root,
             app_data_root,
             cache_bust=True,
+            user_id=admin.id,
         ),
         video_count=video_count,
         created_at=artist.created_at,
@@ -421,7 +462,7 @@ async def update_artist(
 @router.post("/{artist_id}/refresh-metadata", response_model=ArtistRead)
 async def refresh_artist_metadata(
     artist_id: uuid.UUID,
-    _admin: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -475,6 +516,7 @@ async def refresh_artist_metadata(
             media_root,
             app_data_root,
             cache_bust=True,
+            user_id=admin.id,
         ),
         video_count=video_count,
         created_at=artist.created_at,
@@ -500,7 +542,7 @@ async def delete_artist(
 async def upload_artist_image(
     artist_id: uuid.UUID,
     file: UploadFile,
-    _admin: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -515,13 +557,23 @@ async def upload_artist_image(
 
     media_root = await get_effective_media_path(db)
     app_data_root = await get_effective_app_data_path(db)
-    ext = os.path.splitext(file.filename or "img.jpg")[1] or ".jpg"
-    safe_name = artist.name.replace("/", "_").replace(" ", "_")
+    ext = (os.path.splitext(file.filename or "img.jpg")[1] or ".jpg").lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        ext = ".jpg"
     image_dir = os.path.join(app_data_root, ".artist-images")
     os.makedirs(image_dir, exist_ok=True)
-    image_path = os.path.join(image_dir, f"{safe_name}{ext}")
+    image_path = os.path.join(image_dir, f"{artist.id}{ext}")
 
-    content = await file.read()
+    content = await read_upload_limited(
+        file,
+        settings.MAX_IMAGE_UPLOAD_BYTES,
+        "Image file is too large",
+    )
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image file is empty",
+        )
     with open(image_path, "wb") as f:
         f.write(content)
 
@@ -544,6 +596,7 @@ async def upload_artist_image(
             media_root,
             app_data_root,
             cache_bust=True,
+            user_id=admin.id,
         ),
         video_count=video_count,
         created_at=artist.created_at,

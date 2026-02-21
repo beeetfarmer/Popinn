@@ -9,6 +9,7 @@ from app.api.deps import get_current_admin, get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.http_security import clear_auth_cookies, set_auth_cookies
+from app.core.uploads import read_upload_limited
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -31,8 +32,14 @@ from app.schemas.auth import (
 )
 from app.services.path_urls import to_public_asset_url
 from app.services.runtime_settings import get_effective_app_data_path, get_effective_media_path
+from app.services.stream_tokens import sign_stream_url_for_user
+from app.services.token_revocation import (
+    is_token_payload_revoked,
+    revoke_token_if_present,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
 def _issue_tokens_for_user(response: Response, user: User) -> TokenPair:
@@ -50,12 +57,17 @@ def _asset_url(
     media_root: str,
     app_data_root: str,
     cache_bust: bool = False,
+    user_id: uuid.UUID | None = None,
 ) -> str | None:
+    signer = None
+    if user_id is not None:
+        signer = lambda url: sign_stream_url_for_user(url, user_id) or url
     return to_public_asset_url(
         abs_path_or_url,
         media_root=media_root,
         app_data_root=app_data_root,
         cache_bust=cache_bust,
+        signer=signer,
     )
 
 
@@ -64,7 +76,13 @@ def _user_to_read(user: User, media_root: str, app_data_root: str) -> UserRead:
         id=user.id,
         username=user.username,
         email=user.email,
-        image_url=_asset_url(user.image_path, media_root, app_data_root, cache_bust=True),
+        image_url=_asset_url(
+            user.image_path,
+            media_root,
+            app_data_root,
+            cache_bust=True,
+            user_id=user.id,
+        ),
         role=user.role.value,
         is_active=user.is_active,
         created_at=user.created_at,
@@ -89,6 +107,11 @@ async def register(
     # First user becomes admin automatically
     count_result = await db.execute(select(func.count(User.id)))
     user_count = count_result.scalar() or 0
+    if user_count > 0 and not settings.ALLOW_PUBLIC_REGISTRATION:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public registration is disabled",
+        )
     role = UserRole.admin if user_count == 0 else UserRole.user
 
     user = User(
@@ -156,6 +179,11 @@ async def refresh(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
         )
+    if await is_token_payload_revoked(payload, expected_type="refresh", db=db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token is no longer valid. Please sign in again.",
+        )
 
     try:
         user_id = uuid.UUID(payload["sub"])
@@ -174,11 +202,42 @@ async def refresh(
             detail="User not found or inactive",
         )
 
+    # Rotate refresh token to prevent replay.
+    await revoke_token_if_present(
+        refresh_token,
+        expected_type="refresh",
+        db=db,
+    )
+    await db.commit()
+
     return _issue_tokens_for_user(response, user)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(response: Response):
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    header_access_token: str | None = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        header_access_token = auth_header[7:].strip() or None
+
+    access_token = header_access_token or request.cookies.get(settings.ACCESS_COOKIE_NAME)
+    refresh_token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+
+    await revoke_token_if_present(
+        access_token,
+        expected_type="access",
+        db=db,
+    )
+    await revoke_token_if_present(
+        refresh_token,
+        expected_type="refresh",
+        db=db,
+    )
+    await db.commit()
     clear_auth_cookies(response)
 
 
@@ -250,12 +309,23 @@ async def upload_my_image(
 
     media_root = await get_effective_media_path(db)
     app_data_root = await get_effective_app_data_path(db)
-    ext = os.path.splitext(file.filename or "img.jpg")[1] or ".jpg"
+    ext = (os.path.splitext(file.filename or "img.jpg")[1] or ".jpg").lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        ext = ".jpg"
     image_dir = os.path.join(app_data_root, ".user-images")
     os.makedirs(image_dir, exist_ok=True)
     image_path = os.path.join(image_dir, f"{user.id}{ext}")
 
-    content = await file.read()
+    content = await read_upload_limited(
+        file,
+        settings.MAX_IMAGE_UPLOAD_BYTES,
+        "Image file is too large",
+    )
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image file is empty",
+        )
     with open(image_path, "wb") as f:
         f.write(content)
 

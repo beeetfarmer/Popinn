@@ -6,7 +6,9 @@ from sqlalchemy import and_, case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.uploads import read_upload_limited
 from app.models.playback import VideoPlay
 from app.models.system import Setting
 from app.models.user import User
@@ -41,6 +43,13 @@ from app.services.runtime_settings import (
 from app.tasks.media import regenerate_all_thumbnails
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+EXPORTABLE_SETTING_KEYS = {
+    SETTING_MEDIA_PATH,
+    SETTING_APP_DATA_PATH,
+    SETTING_TRANSCODING_ENABLED,
+    SETTING_VIEW_THRESHOLD_RATIO,
+    SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES,
+}
 
 
 @router.get("/", response_model=list[SettingRead])
@@ -88,6 +97,28 @@ async def update_runtime_settings(
     _admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    current_media_path = await get_effective_media_path(db)
+    current_app_data_path = await get_effective_app_data_path(db)
+    paths_changed = (
+        body.media_path != current_media_path
+        or body.app_data_path != current_app_data_path
+    )
+
+    if not settings.ALLOW_RUNTIME_PATH_CHANGES:
+        if paths_changed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Runtime media/app-data path changes are disabled on this server",
+            )
+
+    if paths_changed and (
+        not os.path.isabs(body.media_path) or not os.path.isabs(body.app_data_path)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Runtime paths must be absolute paths",
+        )
+
     if not os.path.isdir(body.media_path):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -181,7 +212,13 @@ async def export_settings_and_history(
     _admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    settings_rows = (await db.execute(select(Setting).order_by(Setting.key))).scalars().all()
+    settings_rows = (
+        await db.execute(
+            select(Setting)
+            .where(Setting.key.in_(EXPORTABLE_SETTING_KEYS))
+            .order_by(Setting.key)
+        )
+    ).scalars().all()
 
     play_rows = (
         await db.execute(
@@ -227,9 +264,25 @@ async def import_settings_and_history(
     _admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    allowed_content_types = {"application/json", "text/json", "application/octet-stream"}
+    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+    if content_type and content_type not in allowed_content_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Import file must be JSON",
+        )
+
     try:
-        raw = await file.read()
+        raw = await read_upload_limited(
+            file,
+            settings.MAX_SETTINGS_IMPORT_BYTES,
+            "Import file is too large",
+        )
+        if not raw:
+            raise ValueError("empty import")
         payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("invalid import root")
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -242,8 +295,19 @@ async def import_settings_and_history(
     warnings: list[str] = []
 
     for setting_item in payload.get("settings", []):
+        if not isinstance(setting_item, dict):
+            continue
         key = setting_item.get("key")
         if not key or not isinstance(key, str):
+            continue
+        if key not in EXPORTABLE_SETTING_KEYS:
+            continue
+        if (
+            key in {SETTING_MEDIA_PATH, SETTING_APP_DATA_PATH}
+            and not settings.ALLOW_RUNTIME_PATH_CHANGES
+        ):
+            if len(warnings) < 25:
+                warnings.append(f"Skipped restricted setting key: {key}")
             continue
         value = setting_item.get("value")
         await set_setting_value(db, key, value if isinstance(value, str) or value is None else str(value))
@@ -253,11 +317,29 @@ async def import_settings_and_history(
     video_cache: dict[str, Video | None] = {}
     threshold_ratio = await get_effective_view_threshold_ratio(db)
 
-    for play_item in payload.get("playback_history", []):
+    playback_rows = payload.get("playback_history", [])
+    if not isinstance(playback_rows, list):
+        playback_rows = []
+    if len(playback_rows) > 100_000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Import contains too many playback history rows",
+        )
+
+    for play_item in playback_rows:
+        if not isinstance(play_item, dict):
+            skipped_playback += 1
+            continue
         email = str(play_item.get("user_email") or "").strip()
         username = str(play_item.get("user_username") or "").strip()
         video_file_path = str(play_item.get("video_file_path") or "").strip()
-        watched_seconds = int(play_item.get("watched_seconds") or 0)
+        try:
+            watched_seconds = int(play_item.get("watched_seconds") or 0)
+        except (TypeError, ValueError):
+            skipped_playback += 1
+            if len(warnings) < 25:
+                warnings.append("Skipped playback row: invalid watched_seconds")
+            continue
         video_duration_seconds = play_item.get("video_duration_seconds")
         played_at_raw = play_item.get("played_at")
         counted_play = play_item.get("counted_play")
@@ -313,7 +395,13 @@ async def import_settings_and_history(
             skipped_playback += 1
             continue
 
-        duration = int(video_duration_seconds) if isinstance(video_duration_seconds, int) else video.duration
+        if isinstance(video_duration_seconds, int):
+            duration = video_duration_seconds
+        else:
+            try:
+                duration = int(video_duration_seconds)
+            except (TypeError, ValueError):
+                duration = video.duration
         if isinstance(counted_play, bool):
             is_counted_play = counted_play
         else:

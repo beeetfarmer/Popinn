@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SettingRead(BaseModel):
@@ -13,6 +13,7 @@ class SettingRead(BaseModel):
 
 class SettingUpdate(BaseModel):
     value: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class RuntimeSettingsRead(BaseModel):
@@ -29,6 +30,7 @@ class RuntimeSettingsUpdate(BaseModel):
     transcoding_enabled: bool
     view_threshold_percent: int = Field(ge=1, le=100)
     lastfm_override_local_artist_images: bool = True
+    model_config = ConfigDict(extra="forbid")
 
 
 class ViewThresholdRead(BaseModel):
