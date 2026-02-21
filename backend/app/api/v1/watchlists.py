@@ -84,6 +84,22 @@ async def _get_user_watchlist(
     return watchlist
 
 
+async def _count_active_watchlist_items(
+    watchlist_id: uuid.UUID,
+    db: AsyncSession,
+) -> int:
+    count_result = await db.execute(
+        select(func.count(Video.id))
+        .select_from(WatchlistItem)
+        .join(Video, WatchlistItem.video_id == Video.id)
+        .where(
+            WatchlistItem.watchlist_id == watchlist_id,
+            Video.deleted_at.is_(None),
+        )
+    )
+    return int(count_result.scalar() or 0)
+
+
 @router.post("/", response_model=WatchlistRead, status_code=status.HTTP_201_CREATED)
 async def create_watchlist(
     body: WatchlistCreate,
@@ -108,8 +124,12 @@ async def list_watchlists(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Watchlist, func.count(WatchlistItem.id).label("item_count"))
+        select(Watchlist, func.count(Video.id).label("item_count"))
         .outerjoin(WatchlistItem, WatchlistItem.watchlist_id == Watchlist.id)
+        .outerjoin(
+            Video,
+            (Video.id == WatchlistItem.video_id) & Video.deleted_at.is_(None),
+        )
         .where(Watchlist.user_id == user.id)
         .group_by(Watchlist.id)
         .order_by(Watchlist.created_at.desc())
@@ -175,12 +195,7 @@ async def update_watchlist(
     await db.commit()
     await db.refresh(watchlist)
 
-    count_result = await db.execute(
-        select(func.count(WatchlistItem.id)).where(
-            WatchlistItem.watchlist_id == watchlist.id
-        )
-    )
-    item_count = count_result.scalar() or 0
+    item_count = await _count_active_watchlist_items(watchlist.id, db)
     return WatchlistRead(
         id=watchlist.id,
         name=watchlist.name,
@@ -232,12 +247,7 @@ async def add_video_to_watchlist(
             detail="Video already in watchlist",
         )
 
-    count_result = await db.execute(
-        select(func.count(WatchlistItem.id)).where(
-            WatchlistItem.watchlist_id == watchlist.id
-        )
-    )
-    item_count = count_result.scalar() or 0
+    item_count = await _count_active_watchlist_items(watchlist.id, db)
     return WatchlistRead(
         id=watchlist.id,
         name=watchlist.name,

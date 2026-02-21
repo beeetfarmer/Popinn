@@ -12,6 +12,7 @@ class ArtistRead(BaseModel):
     bio: str | None = None
     image_url: str | None = None
     video_count: int = 0
+    play_count: int = 0
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}

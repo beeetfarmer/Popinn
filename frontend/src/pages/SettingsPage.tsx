@@ -37,6 +37,43 @@ interface RuntimeSettings {
   transcoding_enabled: boolean;
 }
 
+interface ExportSettingItem {
+  key: string;
+  value: string | null;
+}
+
+interface ExportPlaybackItem {
+  user_email: string;
+  user_username: string;
+  video_file_path: string;
+  watched_seconds: number;
+  video_duration_seconds: number | null;
+  counted_play: boolean;
+  played_at: string;
+}
+
+interface ExportPayload {
+  version: number;
+  exported_at: string;
+  settings: ExportSettingItem[];
+  playback_history: ExportPlaybackItem[];
+}
+
+interface ImportResponse {
+  imported_settings: number;
+  imported_playback_history: number;
+  skipped_playback_history: number;
+  warnings: string[];
+}
+
+function getCookie(name: string): string | null {
+  const match = document.cookie
+    .split("; ")
+    .find((part) => part.startsWith(`${name}=`));
+  if (!match) return null;
+  return decodeURIComponent(match.split("=")[1] || "");
+}
+
 export default function SettingsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -102,6 +139,57 @@ export default function SettingsPage() {
     onError: (err: any) => toast.error(err.message || "Failed to trigger thumbnail regeneration"),
   });
 
+  const exportMutation = useMutation({
+    mutationFn: () => api.get<ExportPayload>("/settings/export"),
+    onSuccess: (payload) => {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      a.href = url;
+      a.download = `popinn-export-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Export downloaded");
+    },
+    onError: (err: any) => toast.error(err.message || "Failed to export data"),
+  });
+
+  const importMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const csrf = getCookie("popinn_csrf_token");
+      const res = await fetch("/api/v1/settings/import", {
+        method: "POST",
+        headers: csrf ? { "X-CSRF-Token": csrf } : {},
+        credentials: "include",
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Import failed");
+      }
+      return res.json() as Promise<ImportResponse>;
+    },
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["videos"] });
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      toast.success(
+        `Imported settings: ${resp.imported_settings}, plays: ${resp.imported_playback_history}, skipped: ${resp.skipped_playback_history}`
+      );
+      if (resp.warnings.length > 0) {
+        toast.info(`Import warnings: ${resp.warnings.slice(0, 2).join(" | ")}`);
+      }
+    },
+    onError: (err: any) => toast.error(err.message || "Failed to import data"),
+  });
+
   const pollScanStatus = useCallback(async (jobId: string) => {
     try {
       const job = await api.get<ScanJob>(`/scan/jobs/${jobId}`);
@@ -150,6 +238,15 @@ export default function SettingsPage() {
       setScanning(false);
       toast.error(err.message || "Failed to start scan");
     }
+  }
+
+  function handleImportFile(file: File | null) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".json")) {
+      toast.error("Please select a JSON export file");
+      return;
+    }
+    importMutation.mutate(file);
   }
 
   return (
@@ -275,6 +372,41 @@ export default function SettingsPage() {
                 </div>
               </>
             )}
+          </section>
+        )}
+
+        {isAdmin && (
+          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+            <h2 className="text-lg font-semibold text-foreground">Backup & Restore</h2>
+            <p className="text-sm text-muted-foreground">
+              Export and import settings plus playback history for migrations to another server with the same media files.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => exportMutation.mutate()}
+                disabled={exportMutation.isPending}
+              >
+                {exportMutation.isPending ? "Exporting..." : "Export Settings + History"}
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={importMutation.isPending}
+                onClick={() => document.getElementById("settings-import-file")?.click()}
+              >
+                {importMutation.isPending ? "Importing..." : "Import Settings + History"}
+              </Button>
+              <input
+                id="settings-import-file"
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  handleImportFile(e.target.files?.[0] || null);
+                  e.currentTarget.value = "";
+                }}
+              />
+            </div>
           </section>
         )}
 

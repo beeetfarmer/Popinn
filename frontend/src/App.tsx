@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { QueueProvider } from "@/contexts/QueueContext";
 import Layout from "@/components/Layout";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Index from "./pages/Index";
@@ -28,34 +29,36 @@ const App = () => (
       <Toaster />
       <Sonner />
       <AuthProvider>
-        <BrowserRouter>
-          <Routes>
-            {/* Auth routes — no layout */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
+        <QueueProvider>
+          <BrowserRouter>
+            <Routes>
+              {/* Auth routes — no layout */}
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
 
-            {/* Main routes — with top bar + bottom dock, all require auth */}
-            <Route
-              element={
-                <ProtectedRoute>
-                  <Layout />
-                </ProtectedRoute>
-              }
-            >
-              <Route path="/" element={<Index />} />
-              <Route path="/videos" element={<MusicVideosPage />} />
-              <Route path="/artists" element={<ArtistsPage />} />
-              <Route path="/artist/:id" element={<ArtistDetail />} />
-              <Route path="/video/:id" element={<VideoPlayer />} />
-              <Route path="/search" element={<SearchPage />} />
-              <Route path="/watchlists" element={<WatchlistsPage />} />
-              <Route path="/watchlists/:id" element={<WatchlistDetail />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/profile" element={<ProfilePage />} />
-              <Route path="*" element={<NotFound />} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
+              {/* Main routes — with top bar + bottom dock, all require auth */}
+              <Route
+                element={
+                  <ProtectedRoute>
+                    <Layout />
+                  </ProtectedRoute>
+                }
+              >
+                <Route path="/" element={<Index />} />
+                <Route path="/videos" element={<MusicVideosPage />} />
+                <Route path="/artists" element={<ArtistsPage />} />
+                <Route path="/artist/:id" element={<ArtistDetail />} />
+                <Route path="/video/:id" element={<VideoPlayer />} />
+                <Route path="/search" element={<SearchPage />} />
+                <Route path="/watchlists" element={<WatchlistsPage />} />
+                <Route path="/watchlists/:id" element={<WatchlistDetail />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/profile" element={<ProfilePage />} />
+                <Route path="*" element={<NotFound />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </QueueProvider>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>

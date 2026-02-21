@@ -2,7 +2,7 @@ import uuid
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,10 +17,14 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.models.artist import Artist
+from app.models.playback import VideoPlay
 from app.models.user import User, UserRole
+from app.models.video import Video
 from app.schemas.auth import (
     TokenPair,
     TokenRefresh,
+    UserPlaybackRead,
     UserLogin,
     UserRead,
     UserRegister,
@@ -261,6 +265,54 @@ async def upload_my_image(
     await db.commit()
     await db.refresh(user)
     return _user_to_read(user, media_root)
+
+
+@router.get("/me/plays", response_model=list[UserPlaybackRead])
+async def list_my_playback_history(
+    title: str | None = Query(None, description="Filter by video title"),
+    artist_id: uuid.UUID | None = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    query = (
+        select(
+            VideoPlay,
+            Video.id.label("video_id"),
+            Video.title.label("video_title"),
+            Artist.id.label("artist_id"),
+            Artist.name.label("artist_name"),
+        )
+        .join(Video, VideoPlay.video_id == Video.id)
+        .join(Artist, Video.artist_id == Artist.id)
+        .where(
+            VideoPlay.user_id == user.id,
+            Video.deleted_at.is_(None),
+            Artist.deleted_at.is_(None),
+        )
+        .order_by(VideoPlay.played_at.desc())
+        .limit(limit)
+    )
+
+    if title:
+        query = query.where(Video.title.ilike(f"%{title}%"))
+    if artist_id:
+        query = query.where(Video.artist_id == artist_id)
+
+    rows = (await db.execute(query)).all()
+    return [
+        UserPlaybackRead(
+            id=play.id,
+            video_id=video_id,
+            video_title=video_title,
+            artist_id=row_artist_id,
+            artist_name=artist_name,
+            watched_seconds=play.watched_seconds,
+            counted_play=play.counted_play,
+            played_at=play.played_at,
+        )
+        for play, video_id, video_title, row_artist_id, artist_name in rows
+    ]
 
 
 @router.get("/users", response_model=list[UserRead])
