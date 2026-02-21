@@ -1,10 +1,12 @@
 import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { MusicVideo, Artist } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import PageTransition from "@/components/PageTransition";
 import { useAuth } from "@/contexts/AuthContext";
+import { useQueue } from "@/contexts/QueueContext";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -20,6 +22,8 @@ import {
   Square,
   Trash2,
   X,
+  Play,
+  Shuffle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -27,6 +31,8 @@ const PER_PAGE = 12;
 
 export default function MusicVideosPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const { startQueue } = useQueue();
   const isAdmin = user?.role === "admin";
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
@@ -136,12 +142,28 @@ export default function MusicVideosPage() {
     setSelected(new Set());
   }
 
+  function startLibraryQueue(shuffleQueue: boolean) {
+    if (filtered.length === 0) {
+      toast.error("No videos available for playback");
+      return;
+    }
+    const queue = shuffleQueue ? [...filtered].sort(() => Math.random() - 0.5) : filtered;
+    startQueue(queue, { startIndex: 0 });
+    navigate(`/video/${queue[0].id}`);
+  }
+
   return (
     <PageTransition>
       <div>
         <div className="mb-6 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-foreground">Music Videos</h1>
           <span className="text-sm text-muted-foreground">({filtered.length})</span>
+          <Button variant="outline" size="sm" onClick={() => startLibraryQueue(false)}>
+            <Play className="mr-1 h-4 w-4" /> Play All
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => startLibraryQueue(true)}>
+            <Shuffle className="mr-1 h-4 w-4" /> Shuffle
+          </Button>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {isAdmin && !selectMode ? (
               <Button variant="outline" size="sm" onClick={() => setSelectMode(true)}>

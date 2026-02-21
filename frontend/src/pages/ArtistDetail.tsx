@@ -1,11 +1,11 @@
 import { useState, useCallback } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { ArtistDetail as ArtistDetailType } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import PageTransition from "@/components/PageTransition";
-import { ArrowLeft, Upload, Pencil } from "lucide-react";
+import { ArrowLeft, Upload, Pencil, Play, Shuffle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { useQueue } from "@/contexts/QueueContext";
 
 const PER_PAGE = 10;
 
@@ -30,7 +31,9 @@ function getCookie(name: string): string | null {
 
 export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
+  const { startQueue } = useQueue();
   const isAdmin = user?.role === "admin";
   const queryClient = useQueryClient();
   const [dragOver, setDragOver] = useState(false);
@@ -129,6 +132,18 @@ export default function ArtistDetail() {
   const start = (page - 1) * PER_PAGE;
   const paginatedVideos = artist.videos.slice(start, start + PER_PAGE);
 
+  function startArtistQueue(shuffleQueue: boolean) {
+    if (artist.videos.length === 0) {
+      toast.error("No videos available for this artist");
+      return;
+    }
+    const queue = shuffleQueue
+      ? [...artist.videos].sort(() => Math.random() - 0.5)
+      : artist.videos;
+    startQueue(queue, { startIndex: 0 });
+    navigate(`/video/${queue[0].id}`);
+  }
+
   return (
     <PageTransition>
       <div>
@@ -208,6 +223,17 @@ export default function ArtistDetail() {
             <p className="mt-3 text-xs text-muted-foreground">
               {artist.videos.length} music video{artist.videos.length !== 1 && "s"}
             </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {artist.play_count || 0} counted play{(artist.play_count || 0) !== 1 && "s"}
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => startArtistQueue(false)}>
+                <Play className="mr-1 h-4 w-4" /> Play All
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => startArtistQueue(true)}>
+                <Shuffle className="mr-1 h-4 w-4" /> Shuffle
+              </Button>
+            </div>
           </div>
         </div>
 

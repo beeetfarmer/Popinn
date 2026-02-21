@@ -4,6 +4,7 @@ export interface Artist {
   bio: string | null;
   image_url: string | null;
   video_count: number;
+  play_count?: number;
 }
 
 export interface MusicVideo {

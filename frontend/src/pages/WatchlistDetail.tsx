@@ -13,8 +13,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Trash2, Pencil } from "lucide-react";
+import { ArrowLeft, Trash2, Pencil, Play, Shuffle } from "lucide-react";
 import { toast } from "sonner";
+import { useQueue } from "@/contexts/QueueContext";
 
 interface WatchlistDetailData {
   id: string;
@@ -27,6 +28,7 @@ interface WatchlistDetailData {
 export default function WatchlistDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { startQueue } = useQueue();
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState("");
@@ -91,6 +93,18 @@ export default function WatchlistDetail() {
     renameMutation.mutate(name);
   }
 
+  function startWatchlistQueue(shuffleQueue: boolean) {
+    if (!watchlist || watchlist.videos.length === 0) {
+      toast.error("No videos in this watchlist");
+      return;
+    }
+    const queue = shuffleQueue
+      ? [...watchlist.videos].sort(() => Math.random() - 0.5)
+      : watchlist.videos;
+    startQueue(queue, { startIndex: 0 });
+    navigate(`/video/${queue[0].id}`);
+  }
+
   if (isLoading) {
     return <p className="text-muted-foreground">Loading...</p>;
   }
@@ -110,32 +124,42 @@ export default function WatchlistDetail() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold text-foreground">{watchlist.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-foreground">{watchlist.name}</h1>
+              <button
+                onClick={() => {
+                  setEditName(watchlist.name);
+                  setEditOpen(true);
+                }}
+                className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                title="Rename watchlist"
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`Delete "${watchlist.name}"?`)) {
+                    deleteMutation.mutate();
+                  }
+                }}
+                className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                title="Delete watchlist"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
             <p className="text-sm text-muted-foreground">
               {watchlist.item_count} video{watchlist.item_count !== 1 ? "s" : ""}
             </p>
+            <div className="mt-2 flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => startWatchlistQueue(false)}>
+                <Play className="mr-1 h-4 w-4" /> Play All
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => startWatchlistQueue(true)}>
+                <Shuffle className="mr-1 h-4 w-4" /> Shuffle
+              </Button>
+            </div>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setEditName(watchlist.name);
-              setEditOpen(true);
-            }}
-          >
-            <Pencil className="mr-1 h-4 w-4" /> Rename
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => {
-              if (confirm(`Delete "${watchlist.name}"?`)) {
-                deleteMutation.mutate();
-              }
-            }}
-          >
-            <Trash2 className="mr-1 h-4 w-4" /> Delete
-          </Button>
         </div>
 
         {watchlist.videos.length === 0 ? (
