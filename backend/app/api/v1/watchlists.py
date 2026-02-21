@@ -2,7 +2,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -62,6 +62,7 @@ def _video_to_read(
         album=video.album,
         duration=video.duration,
         thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root),
+        preview_url=_asset_url(video.preview_path, media_root, app_data_root),
         video_url=video_url,
         playback_url=hls_url or video_url,
         year=video.year,
@@ -215,6 +216,11 @@ async def delete_watchlist(
     db: AsyncSession = Depends(get_db),
 ):
     watchlist = await _get_user_watchlist(watchlist_id, user, db)
+    # Delete link rows first so watchlist removal works reliably even when
+    # database FK cascade settings differ between environments.
+    await db.execute(
+        delete(WatchlistItem).where(WatchlistItem.watchlist_id == watchlist.id)
+    )
     await db.delete(watchlist)
     await db.commit()
 
