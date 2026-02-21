@@ -39,3 +39,24 @@ class VideoUpdate(BaseModel):
 
 class VideoBulkDelete(BaseModel):
     video_ids: list[uuid.UUID]
+
+
+class VideoPlayCreate(BaseModel):
+    watched_seconds: float
+    video_duration_seconds: int | None = None
+
+
+class VideoPlayRead(BaseModel):
+    id: uuid.UUID
+    watched_seconds: int
+    video_duration_seconds: int | None = None
+    counted_play: bool
+    played_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class VideoPlayStats(BaseModel):
+    play_count: int
+    total_watched_seconds: int
+    history: list[VideoPlayRead]

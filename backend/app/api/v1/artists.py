@@ -12,6 +12,7 @@ from app.api.deps import get_current_admin
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.artist import Artist
+from app.models.playback import VideoPlay
 from app.models.user import User
 from app.models.video import Video
 from app.schemas.artist import ArtistDetailRead, ArtistRead, ArtistUpdate
@@ -125,12 +126,23 @@ async def get_artist(artist_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     media_root = await get_effective_media_path(db)
     transcoding_enabled = await get_effective_transcoding_enabled(db)
     active_videos = [v for v in artist.videos if v.deleted_at is None]
+    play_count_result = await db.execute(
+        select(func.count(VideoPlay.id))
+        .join(Video, VideoPlay.video_id == Video.id)
+        .where(
+            Video.artist_id == artist.id,
+            Video.deleted_at.is_(None),
+            VideoPlay.counted_play.is_(True),
+        )
+    )
+    play_count = play_count_result.scalar() or 0
     return ArtistDetailRead(
         id=artist.id,
         name=artist.name,
         bio=artist.bio,
         image_url=_to_media_url(artist.image_path, media_root, cache_bust=True),
         video_count=len(active_videos),
+        play_count=play_count,
         created_at=artist.created_at,
         videos=[_video_to_read(v, artist.name, media_root, transcoding_enabled) for v in active_videos],
     )
