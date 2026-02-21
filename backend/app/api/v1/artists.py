@@ -82,6 +82,7 @@ def _video_to_read(
         album=video.album,
         duration=video.duration,
         thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root),
+        preview_url=_asset_url(video.preview_path, media_root, app_data_root),
         video_url=video_url,
         playback_url=hls_url or video_url,
         year=video.year,

@@ -12,6 +12,7 @@ class VideoRead(BaseModel):
     album: str | None = None
     duration: int | None = None
     thumbnail_url: str | None = None
+    preview_url: str | None = None
     video_url: str | None = None
     playback_url: str | None = None
     year: int | None = None

@@ -16,7 +16,11 @@ from app.services.lastfm import (
     fetch_artist_info,
     is_lastfm_attributed_bio,
 )
-from app.services.metadata import extract_metadata, generate_thumbnail
+from app.services.metadata import (
+    extract_metadata,
+    generate_preview_clip,
+    generate_thumbnail,
+)
 from app.services.path_urls import is_external_url
 
 logger = logging.getLogger(__name__)
@@ -74,6 +78,7 @@ def _process_video(
     artist: Artist,
     artist_name: str,
     thumbnail_dir: str,
+    preview_dir: str,
 ) -> bool:
     """Process a single video file. Returns True if added, False if skipped."""
     result = session.execute(
@@ -91,6 +96,9 @@ def _process_video(
     thumb_filename = f"{video_id}.jpg"
     thumb_path = os.path.join(thumbnail_dir, thumb_filename)
     thumb_ok = generate_thumbnail(file_path, thumb_path)
+    preview_filename = f"{video_id}.mp4"
+    preview_path = os.path.join(preview_dir, preview_filename)
+    preview_ok = generate_preview_clip(file_path, preview_path, start_seconds=5, clip_seconds=10)
 
     video = Video(
         id=video_id,
@@ -100,10 +108,46 @@ def _process_video(
         duration=meta["duration"],
         file_size=meta["file_size"],
         thumbnail_path=thumb_path if thumb_ok else None,
+        preview_path=preview_path if preview_ok else None,
     )
     session.add(video)
     session.flush()
     return True
+
+
+def _ensure_video_assets(
+    video: Video,
+    *,
+    file_path: str,
+    thumbnail_dir: str,
+    preview_dir: str,
+) -> bool:
+    """Backfill missing generated assets for existing active videos."""
+    if video.deleted_at is not None:
+        return False
+    changed = False
+
+    thumb_missing = (
+        not video.thumbnail_path
+        or not os.path.exists(video.thumbnail_path)
+    )
+    if thumb_missing:
+        thumb_path = os.path.join(thumbnail_dir, f"{video.id}.jpg")
+        if generate_thumbnail(file_path, thumb_path):
+            video.thumbnail_path = thumb_path
+            changed = True
+
+    preview_missing = (
+        not video.preview_path
+        or not os.path.exists(video.preview_path)
+    )
+    if preview_missing:
+        preview_path = os.path.join(preview_dir, f"{video.id}.mp4")
+        if generate_preview_clip(file_path, preview_path, start_seconds=5, clip_seconds=10):
+            video.preview_path = preview_path
+            changed = True
+
+    return changed
 
 
 def _process_subtitles(
@@ -180,13 +224,16 @@ def run_scan(
     lastfm_api_key: str,
     lastfm_cache_ttl_hours: int,
     thumbnail_dir: str,
+    preview_dir: str,
     override_local_artist_images: bool = True,
     progress_callback: ScanProgressCallback | None = None,
 ) -> ScanResult:
     """Walk media_path and sync all artists/videos/subtitles to the DB."""
     result = ScanResult()
     thumbnail_dir = os.path.join(app_data_path, thumbnail_dir)
+    preview_dir = os.path.join(app_data_path, preview_dir)
     os.makedirs(thumbnail_dir, exist_ok=True)
+    os.makedirs(preview_dir, exist_ok=True)
 
     with session_factory() as session:
         try:
@@ -287,7 +334,12 @@ def run_scan(
                     result.files_found += 1
                     try:
                         added = _process_video(
-                            session, fentry.path, artist, artist_name, thumbnail_dir
+                            session,
+                            fentry.path,
+                            artist,
+                            artist_name,
+                            thumbnail_dir,
+                            preview_dir,
                         )
                         if added:
                             result.files_added += 1
@@ -298,6 +350,13 @@ def run_scan(
                         )
                         video = vid_result.scalar_one_or_none()
                         if video:
+                            if _ensure_video_assets(
+                                video,
+                                file_path=fentry.path,
+                                thumbnail_dir=thumbnail_dir,
+                                preview_dir=preview_dir,
+                            ):
+                                session.flush()
                             video_map[Path(fentry.name).stem] = video
                     except Exception as e:
                         msg = f"Error processing {fentry.path}: {e}"

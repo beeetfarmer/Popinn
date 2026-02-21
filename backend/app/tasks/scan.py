@@ -91,6 +91,7 @@ def run_library_scan(scan_job_id: str) -> dict:
             lastfm_api_key=settings.LASTFM_API_KEY,
             lastfm_cache_ttl_hours=settings.LASTFM_CACHE_TTL_HOURS,
             thumbnail_dir=settings.THUMBNAIL_DIR,
+            preview_dir=settings.PREVIEW_DIR,
             override_local_artist_images=override_local_artist_images,
             progress_callback=progress_callback,
         )
