@@ -12,6 +12,28 @@ from app.services.runtime_settings import (
 logger = logging.getLogger(__name__)
 
 
+def _update_scan_job_progress(
+    scan_job_id: str,
+    session_factory,
+    *,
+    folders_total: int,
+    folders_processed: int,
+    current_folder: str | None,
+    files_found: int,
+    files_added: int,
+) -> None:
+    with session_factory() as session:
+        job = session.get(ScanJob, scan_job_id)
+        if not job:
+            return
+        job.folders_total = folders_total
+        job.folders_processed = folders_processed
+        job.current_folder = current_folder
+        job.files_found = files_found
+        job.files_added = files_added
+        session.commit()
+
+
 def run_library_scan(scan_job_id: str) -> dict:
     """Run a full library scan in-process."""
     from app.services.scanner import run_scan
@@ -26,17 +48,42 @@ def run_library_scan(scan_job_id: str) -> dict:
 
         job.status = ScanStatus.running
         job.started_at = datetime.now(timezone.utc)
+        job.completed_at = None
+        job.files_found = 0
+        job.files_added = 0
+        job.folders_total = 0
+        job.folders_processed = 0
+        job.current_folder = None
+        job.errors = None
         session.commit()
 
     try:
         with session_factory() as session:
             media_path = get_effective_media_path_sync(session)
 
+        def progress_callback(
+            folders_total: int,
+            folders_processed: int,
+            current_folder: str | None,
+            files_found: int,
+            files_added: int,
+        ) -> None:
+            _update_scan_job_progress(
+                scan_job_id,
+                session_factory,
+                folders_total=folders_total,
+                folders_processed=folders_processed,
+                current_folder=current_folder,
+                files_found=files_found,
+                files_added=files_added,
+            )
+
         result = run_scan(
             session_factory=session_factory,
             media_path=media_path,
             lastfm_api_key=settings.LASTFM_API_KEY,
             thumbnail_dir=settings.THUMBNAIL_DIR,
+            progress_callback=progress_callback,
         )
 
         with session_factory() as session:
@@ -45,6 +92,10 @@ def run_library_scan(scan_job_id: str) -> dict:
             job.completed_at = datetime.now(timezone.utc)
             job.files_found = result.files_found
             job.files_added = result.files_added
+            if job.folders_total is None:
+                job.folders_total = 0
+            job.folders_processed = job.folders_total
+            job.current_folder = None
             job.errors = json.dumps(result.errors) if result.errors else None
             session.commit()
 
@@ -60,6 +111,7 @@ def run_library_scan(scan_job_id: str) -> dict:
             if job:
                 job.status = ScanStatus.failed
                 job.completed_at = datetime.now(timezone.utc)
+                job.current_folder = None
                 job.errors = json.dumps([str(e)])
                 session.commit()
         return {"status": "failed", "error": str(e)}

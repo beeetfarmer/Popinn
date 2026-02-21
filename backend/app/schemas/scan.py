@@ -13,6 +13,9 @@ class ScanJobRead(BaseModel):
     completed_at: datetime | None = None
     files_found: int | None = None
     files_added: int | None = None
+    folders_total: int | None = None
+    folders_processed: int | None = None
+    current_folder: str | None = None
     errors: str | None = None
 
     model_config = {"from_attributes": True}

@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".webm", ".mov"}
 SUBTITLE_EXTENSIONS = {".srt", ".vtt"}
+ScanProgressCallback = Callable[[int, int, str | None, int, int], None]
 
 
 @dataclass
@@ -172,6 +174,7 @@ def run_scan(
     media_path: str,
     lastfm_api_key: str,
     thumbnail_dir: str,
+    progress_callback: ScanProgressCallback | None = None,
 ) -> ScanResult:
     """Walk media_path and sync all artists/videos/subtitles to the DB."""
     result = ScanResult()
@@ -180,9 +183,24 @@ def run_scan(
 
     with session_factory() as session:
         try:
-            for entry in sorted(os.scandir(media_path), key=lambda e: e.name):
-                if not entry.is_dir() or entry.name.startswith("."):
-                    continue
+            artist_entries = [
+                entry
+                for entry in sorted(os.scandir(media_path), key=lambda e: e.name)
+                if entry.is_dir() and not entry.name.startswith(".")
+            ]
+            folders_total = len(artist_entries)
+            if progress_callback:
+                progress_callback(folders_total, 0, None, result.files_found, result.files_added)
+
+            for idx, entry in enumerate(artist_entries):
+                if progress_callback:
+                    progress_callback(
+                        folders_total,
+                        idx,
+                        entry.name,
+                        result.files_found,
+                        result.files_added,
+                    )
 
                 artist_name = entry.name
                 artist, is_new = _find_or_create_artist(session, artist_name)
@@ -243,8 +261,25 @@ def run_scan(
                 # Process subtitles for this artist folder
                 _process_subtitles(session, entry.path, video_map)
 
+                if progress_callback:
+                    progress_callback(
+                        folders_total,
+                        idx + 1,
+                        entry.name,
+                        result.files_found,
+                        result.files_added,
+                    )
+
             # Soft-delete videos whose files are gone
             _soft_delete_missing(session, media_path)
+            if progress_callback:
+                progress_callback(
+                    folders_total,
+                    folders_total,
+                    None,
+                    result.files_found,
+                    result.files_added,
+                )
 
             session.commit()
         except Exception as e:

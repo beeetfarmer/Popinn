@@ -29,6 +29,9 @@ class ScanJob(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     files_found: Mapped[int | None] = mapped_column(Integer)
     files_added: Mapped[int | None] = mapped_column(Integer)
+    folders_total: Mapped[int | None] = mapped_column(Integer)
+    folders_processed: Mapped[int | None] = mapped_column(Integer)
+    current_folder: Mapped[str | None] = mapped_column(String(500))
     errors: Mapped[str | None] = mapped_column(Text)
 
 
