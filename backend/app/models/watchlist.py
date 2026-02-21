@@ -27,7 +27,11 @@ class Watchlist(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    items: Mapped[list["WatchlistItem"]] = relationship(back_populates="watchlist")
+    items: Mapped[list["WatchlistItem"]] = relationship(
+        back_populates="watchlist",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class WatchlistItem(Base):
