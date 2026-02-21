@@ -17,14 +17,18 @@ class SettingUpdate(BaseModel):
 
 class RuntimeSettingsRead(BaseModel):
     media_path: str
+    app_data_path: str
     transcoding_enabled: bool
     view_threshold_percent: int = Field(ge=1, le=100)
+    lastfm_override_local_artist_images: bool
 
 
 class RuntimeSettingsUpdate(BaseModel):
     media_path: str = Field(min_length=1)
+    app_data_path: str = Field(min_length=1)
     transcoding_enabled: bool
     view_threshold_percent: int = Field(ge=1, le=100)
+    lastfm_override_local_artist_images: bool = True
 
 
 class ViewThresholdRead(BaseModel):

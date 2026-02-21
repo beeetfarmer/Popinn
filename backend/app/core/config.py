@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     VIEW_THRESHOLD_RATIO: float = 0.2
 
     MEDIA_PATH: str = "/media"
+    APP_DATA_PATH: str = "./app-data"
     LASTFM_API_KEY: str = ""
     LASTFM_CACHE_TTL_HOURS: int = 168
     SPOTIFY_CLIENT_ID: str = ""

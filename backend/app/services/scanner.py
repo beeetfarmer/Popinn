@@ -13,11 +13,11 @@ from app.models.artist import Artist
 from app.models.subtitle import Subtitle, SubtitleFormat
 from app.models.video import Video
 from app.services.lastfm import (
-    download_artist_image,
     fetch_artist_info,
     is_lastfm_attributed_bio,
 )
 from app.services.metadata import extract_metadata, generate_thumbnail
+from app.services.path_urls import is_external_url
 
 logger = logging.getLogger(__name__)
 
@@ -176,14 +176,16 @@ def _soft_delete_missing(session: Session, media_path: str) -> None:
 def run_scan(
     session_factory: sessionmaker,
     media_path: str,
+    app_data_path: str,
     lastfm_api_key: str,
     lastfm_cache_ttl_hours: int,
     thumbnail_dir: str,
+    override_local_artist_images: bool = True,
     progress_callback: ScanProgressCallback | None = None,
 ) -> ScanResult:
     """Walk media_path and sync all artists/videos/subtitles to the DB."""
     result = ScanResult()
-    thumbnail_dir = os.path.join(media_path, thumbnail_dir)
+    thumbnail_dir = os.path.join(app_data_path, thumbnail_dir)
     os.makedirs(thumbnail_dir, exist_ok=True)
 
     with session_factory() as session:
@@ -210,13 +212,17 @@ def run_scan(
                 artist_name = entry.name
                 artist, is_new = _find_or_create_artist(session, artist_name)
 
-                # Check if existing image is a placeholder (< 10KB)
+                # Determine whether existing image looks usable.
                 has_real_image = False
-                if artist.image_path and os.path.exists(artist.image_path):
-                    has_real_image = os.path.getsize(artist.image_path) > 10_000
+                if artist.image_path:
+                    if is_external_url(artist.image_path):
+                        has_real_image = True
+                    elif os.path.exists(artist.image_path):
+                        has_real_image = os.path.getsize(artist.image_path) > 10_000
                 needs_image = not has_real_image
 
-                is_lastfm_image = bool(artist.image_path and Path(artist.image_path).name == ".artist.jpg")
+                # External URLs are considered Last.fm-managed images in this flow.
+                is_lastfm_image = bool(artist.image_path and is_external_url(artist.image_path))
                 bio_is_lastfm = is_lastfm_attributed_bio(artist.bio)
                 ttl_hours = max(1, int(lastfm_cache_ttl_hours))
                 now_utc = datetime.now(timezone.utc)
@@ -234,20 +240,27 @@ def run_scan(
                 )
 
                 if should_refresh_lastfm:
-                    info = fetch_artist_info(artist_name, lastfm_api_key)
+                    lookup_name = (artist.lastfm_artist_name or artist_name).strip()
+                    info = fetch_artist_info(lookup_name, lastfm_api_key)
                     if info:
                         fetched_bio = info.get("bio")
                         fetched_image_url = info.get("image_url")
+                        canonical_name = (info.get("artist_name") or lookup_name).strip()
+                        artist.lastfm_artist_name = canonical_name
 
                         if fetched_bio and (not artist.bio or bio_is_lastfm or cache_stale):
                             artist.bio = info["bio"]
                         elif cache_stale and bio_is_lastfm and not fetched_bio:
                             artist.bio = None
 
-                        if fetched_image_url and (needs_image or is_lastfm_image or cache_stale):
-                            img_path = os.path.join(entry.path, ".artist.jpg")
-                            if download_artist_image(fetched_image_url, img_path):
-                                artist.image_path = img_path
+                        can_update_image = (
+                            override_local_artist_images
+                            or needs_image
+                            or is_lastfm_image
+                            or not artist.image_path
+                        )
+                        if fetched_image_url and can_update_image:
+                            artist.image_path = fetched_image_url
                         elif cache_stale and is_lastfm_image and not fetched_image_url:
                             artist.image_path = None
 
@@ -323,6 +336,99 @@ def run_scan(
         except Exception as e:
             session.rollback()
             msg = f"Scan failed: {e}"
+            logger.exception(msg)
+            result.errors.append(msg)
+
+    return result
+
+
+def refresh_artist_metadata(
+    session_factory: sessionmaker,
+    lastfm_api_key: str,
+    override_local_artist_images: bool = True,
+    progress_callback: ScanProgressCallback | None = None,
+) -> ScanResult:
+    """Refresh artist bio + image metadata from Last.fm for existing artists."""
+    result = ScanResult()
+    if not lastfm_api_key:
+        result.errors.append("Last.fm API key is not configured")
+        return result
+
+    with session_factory() as session:
+        try:
+            artists = (
+                session.execute(
+                    select(Artist)
+                    .where(Artist.deleted_at.is_(None))
+                    .order_by(Artist.name.asc())
+                )
+                .scalars()
+                .all()
+            )
+            total = len(artists)
+            if progress_callback:
+                progress_callback(total, 0, None, 0, 0)
+
+            updated_count = 0
+            processed_count = 0
+            for idx, artist in enumerate(artists):
+                if progress_callback:
+                    progress_callback(total, idx, artist.name, processed_count, updated_count)
+
+                lookup_name = (artist.lastfm_artist_name or artist.name).strip()
+                info = fetch_artist_info(lookup_name, lastfm_api_key)
+                processed_count += 1
+                result.files_found = processed_count
+
+                if info:
+                    changed = False
+                    fetched_bio = info.get("bio")
+                    fetched_image_url = info.get("image_url")
+                    canonical_name = (info.get("artist_name") or lookup_name).strip()
+
+                    if artist.lastfm_artist_name != canonical_name:
+                        artist.lastfm_artist_name = canonical_name
+                        changed = True
+
+                    if fetched_bio and artist.bio != fetched_bio:
+                        artist.bio = fetched_bio
+                        changed = True
+
+                    if fetched_image_url and (
+                        override_local_artist_images
+                        or not artist.image_path
+                        or is_external_url(artist.image_path)
+                    ):
+                        if artist.image_path != fetched_image_url:
+                            artist.image_path = fetched_image_url
+                            changed = True
+
+                    if changed:
+                        artist.lastfm_fetched_at = datetime.now(timezone.utc)
+                        updated_count += 1
+                        result.files_added = updated_count
+
+                if progress_callback:
+                    progress_callback(
+                        total,
+                        idx + 1,
+                        artist.name,
+                        processed_count,
+                        updated_count,
+                    )
+
+            session.commit()
+            if progress_callback:
+                progress_callback(
+                    total,
+                    total,
+                    None,
+                    result.files_found,
+                    result.files_added,
+                )
+        except Exception as e:
+            session.rollback()
+            msg = f"Artist metadata refresh failed: {e}"
             logger.exception(msg)
             result.errors.append(msg)
 

@@ -17,7 +17,10 @@ from app.core.http_security import enforce_csrf_for_request
 from app.core.logging_setup import configure_logging
 from app.core.rate_limit import rate_limiter
 from app.services.background_jobs import shutdown_background_jobs
-from app.services.runtime_settings import get_effective_media_path
+from app.services.runtime_settings import (
+    get_effective_app_data_path,
+    get_effective_media_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +103,22 @@ async def serve_media(
     file_path = (media_root / requested_path).resolve(strict=False)
     try:
         file_path.relative_to(media_root)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path)
+
+
+@app.get("/data/{requested_path:path}")
+async def serve_app_data(
+    requested_path: str,
+    db: AsyncSession = Depends(get_db),
+):
+    app_data_root = Path(await get_effective_app_data_path(db)).resolve(strict=False)
+    file_path = (app_data_root / requested_path).resolve(strict=False)
+    try:
+        file_path.relative_to(app_data_root)
     except ValueError:
         raise HTTPException(status_code=404, detail="File not found")
     if not file_path.is_file():

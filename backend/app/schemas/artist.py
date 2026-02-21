@@ -9,6 +9,7 @@ from app.schemas.video import VideoRead
 class ArtistRead(BaseModel):
     id: uuid.UUID
     name: str
+    lastfm_artist_name: str | None = None
     bio: str | None = None
     image_url: str | None = None
     video_count: int = 0
@@ -20,6 +21,7 @@ class ArtistRead(BaseModel):
 
 class ArtistUpdate(BaseModel):
     name: str | None = None
+    lastfm_artist_name: str | None = None
     bio: str | None = None
     image_url: str | None = None
 
@@ -37,3 +39,13 @@ class ArtistRecommendationsPage(BaseModel):
     offset: int
     limit: int
     has_more: bool
+
+
+class LastfmArtistSearchItem(BaseModel):
+    name: str
+    image_url: str | None = None
+    url: str | None = None
+
+
+class LastfmArtistApplyRequest(BaseModel):
+    lastfm_artist_name: str

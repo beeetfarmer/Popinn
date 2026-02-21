@@ -29,8 +29,10 @@ from app.schemas.video import (
 )
 from app.services.background_jobs import submit_job
 from app.services.lastfm import fetch_similar_tracks, normalize_for_match
+from app.services.path_urls import to_public_asset_url
 from app.services.playback import is_counted_view
 from app.services.runtime_settings import (
+    get_effective_app_data_path,
     get_effective_media_path,
     get_effective_transcoding_enabled,
     get_effective_view_threshold_ratio,
@@ -52,33 +54,30 @@ SORTABLE_COLUMNS = {
 }
 
 
-def _to_media_url(abs_path: str | None, media_root: str) -> str | None:
-    if not abs_path:
-        return None
-    try:
-        rel = Path(abs_path).resolve(strict=False).relative_to(
-            Path(media_root).resolve(strict=False)
-        )
-    except ValueError:
-        return None
-    return f"/media/{rel.as_posix()}"
+def _asset_url(abs_path_or_url: str | None, media_root: str, app_data_root: str) -> str | None:
+    return to_public_asset_url(
+        abs_path_or_url,
+        media_root=media_root,
+        app_data_root=app_data_root,
+    )
 
 
-def _hls_playlist_url(video_id: uuid.UUID, media_root: str) -> str | None:
-    playlist = Path(media_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
+def _hls_playlist_url(video_id: uuid.UUID, app_data_root: str) -> str | None:
+    playlist = Path(app_data_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
     if not playlist.exists():
         return None
-    return f"/media/{settings.HLS_DIR}/{video_id}/index.m3u8"
+    return f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8"
 
 
 def _video_to_read(
     video: Video,
     artist_name: str,
     media_root: str,
+    app_data_root: str,
     transcoding_enabled: bool,
 ) -> VideoRead:
-    video_url = _to_media_url(video.file_path, media_root)
-    hls_url = _hls_playlist_url(video.id, media_root) if transcoding_enabled else None
+    video_url = _asset_url(video.file_path, media_root, app_data_root)
+    hls_url = _hls_playlist_url(video.id, app_data_root) if transcoding_enabled else None
     return VideoRead(
         id=video.id,
         title=video.title,
@@ -86,7 +85,7 @@ def _video_to_read(
         artist_name=artist_name,
         album=video.album,
         duration=video.duration,
-        thumbnail_url=_to_media_url(video.thumbnail_path, media_root),
+        thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root),
         video_url=video_url,
         playback_url=hls_url or video_url,
         year=video.year,
@@ -120,9 +119,16 @@ async def list_videos(
     result = await db.execute(query)
     videos = result.scalars().all()
     media_root = await get_effective_media_path(db)
+    app_data_root = await get_effective_app_data_path(db)
     transcoding_enabled = await get_effective_transcoding_enabled(db)
     return [
-        _video_to_read(v, v.artist.name if v.artist else "", media_root, transcoding_enabled)
+        _video_to_read(
+            v,
+            v.artist.name if v.artist else "",
+            media_root,
+            app_data_root,
+            transcoding_enabled,
+        )
         for v in videos
     ]
 
@@ -272,6 +278,7 @@ async def get_video_recommendations(
     total = len(matched)
     page = matched[offset : offset + limit]
     media_root = await get_effective_media_path(db)
+    app_data_root = await get_effective_app_data_path(db)
     transcoding_enabled = await get_effective_transcoding_enabled(db)
 
     items = [
@@ -280,6 +287,7 @@ async def get_video_recommendations(
                 row,
                 row.artist.name if row.artist else "",
                 media_root,
+                app_data_root,
                 transcoding_enabled,
             ),
             lastfm_match=score,
@@ -306,8 +314,15 @@ async def get_video(video_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
     media_root = await get_effective_media_path(db)
+    app_data_root = await get_effective_app_data_path(db)
     transcoding_enabled = await get_effective_transcoding_enabled(db)
-    return _video_to_read(video, video.artist.name if video.artist else "", media_root, transcoding_enabled)
+    return _video_to_read(
+        video,
+        video.artist.name if video.artist else "",
+        media_root,
+        app_data_root,
+        transcoding_enabled,
+    )
 
 
 async def _get_active_video(video_id: uuid.UUID, db: AsyncSession) -> Video:
@@ -407,8 +422,15 @@ async def update_video(
     await db.commit()
     await db.refresh(video, ["artist"])
     media_root = await get_effective_media_path(db)
+    app_data_root = await get_effective_app_data_path(db)
     transcoding_enabled = await get_effective_transcoding_enabled(db)
-    return _video_to_read(video, video.artist.name if video.artist else "", media_root, transcoding_enabled)
+    return _video_to_read(
+        video,
+        video.artist.name if video.artist else "",
+        media_root,
+        app_data_root,
+        transcoding_enabled,
+    )
 
 
 @router.post("/{video_id}/hls", status_code=status.HTTP_202_ACCEPTED)

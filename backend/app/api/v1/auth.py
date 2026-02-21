@@ -1,6 +1,5 @@
 import uuid
 import os
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import func, or_, select
@@ -30,7 +29,8 @@ from app.schemas.auth import (
     UserRegister,
     UserUpdate,
 )
-from app.services.runtime_settings import get_effective_media_path
+from app.services.path_urls import to_public_asset_url
+from app.services.runtime_settings import get_effective_app_data_path, get_effective_media_path
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -45,32 +45,26 @@ def _issue_tokens_for_user(response: Response, user: User) -> TokenPair:
     )
 
 
-def _to_media_url(abs_path: str | None, media_root: str, cache_bust: bool = False) -> str | None:
-    if not abs_path:
-        return None
-    try:
-        rel = Path(abs_path).resolve(strict=False).relative_to(
-            Path(media_root).resolve(strict=False)
-        )
-    except ValueError:
-        return None
-
-    url = f"/media/{rel.as_posix()}"
-    if cache_bust:
-        try:
-            mtime = int(os.path.getmtime(abs_path))
-            url += f"?v={mtime}"
-        except OSError:
-            pass
-    return url
+def _asset_url(
+    abs_path_or_url: str | None,
+    media_root: str,
+    app_data_root: str,
+    cache_bust: bool = False,
+) -> str | None:
+    return to_public_asset_url(
+        abs_path_or_url,
+        media_root=media_root,
+        app_data_root=app_data_root,
+        cache_bust=cache_bust,
+    )
 
 
-def _user_to_read(user: User, media_root: str) -> UserRead:
+def _user_to_read(user: User, media_root: str, app_data_root: str) -> UserRead:
     return UserRead(
         id=user.id,
         username=user.username,
         email=user.email,
-        image_url=_to_media_url(user.image_path, media_root, cache_bust=True),
+        image_url=_asset_url(user.image_path, media_root, app_data_root, cache_bust=True),
         role=user.role.value,
         is_active=user.is_active,
         created_at=user.created_at,
@@ -108,7 +102,8 @@ async def register(
     await db.refresh(user)
     _issue_tokens_for_user(response, user)
     media_root = await get_effective_media_path(db)
-    return _user_to_read(user, media_root)
+    app_data_root = await get_effective_app_data_path(db)
+    return _user_to_read(user, media_root, app_data_root)
 
 
 @router.post("/login", response_model=TokenPair)
@@ -193,7 +188,8 @@ async def get_me(
     db: AsyncSession = Depends(get_db),
 ):
     media_root = await get_effective_media_path(db)
-    return _user_to_read(user, media_root)
+    app_data_root = await get_effective_app_data_path(db)
+    return _user_to_read(user, media_root, app_data_root)
 
 
 @router.patch("/me", response_model=UserRead)
@@ -236,7 +232,8 @@ async def update_me(
     await db.commit()
     await db.refresh(user)
     media_root = await get_effective_media_path(db)
-    return _user_to_read(user, media_root)
+    app_data_root = await get_effective_app_data_path(db)
+    return _user_to_read(user, media_root, app_data_root)
 
 
 @router.put("/me/image", response_model=UserRead)
@@ -252,8 +249,9 @@ async def upload_my_image(
         )
 
     media_root = await get_effective_media_path(db)
+    app_data_root = await get_effective_app_data_path(db)
     ext = os.path.splitext(file.filename or "img.jpg")[1] or ".jpg"
-    image_dir = os.path.join(media_root, ".user-images")
+    image_dir = os.path.join(app_data_root, ".user-images")
     os.makedirs(image_dir, exist_ok=True)
     image_path = os.path.join(image_dir, f"{user.id}{ext}")
 
@@ -264,7 +262,7 @@ async def upload_my_image(
     user.image_path = image_path
     await db.commit()
     await db.refresh(user)
-    return _user_to_read(user, media_root)
+    return _user_to_read(user, media_root, app_data_root)
 
 
 @router.get("/me/plays", response_model=list[UserPlaybackRead])
@@ -322,8 +320,9 @@ async def list_users(
 ):
     result = await db.execute(select(User).order_by(User.created_at.desc()))
     media_root = await get_effective_media_path(db)
+    app_data_root = await get_effective_app_data_path(db)
     users = result.scalars().all()
-    return [_user_to_read(user, media_root) for user in users]
+    return [_user_to_read(user, media_root, app_data_root) for user in users]
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

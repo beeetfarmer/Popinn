@@ -21,7 +21,9 @@ from app.schemas.watchlist import (
     WatchlistRead,
     WatchlistUpdate,
 )
+from app.services.path_urls import to_public_asset_url
 from app.services.runtime_settings import (
+    get_effective_app_data_path,
     get_effective_media_path,
     get_effective_transcoding_enabled,
 )
@@ -29,28 +31,29 @@ from app.services.runtime_settings import (
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
 
-def _to_media_url(abs_path: str | None, media_root: str) -> str | None:
-    if not abs_path:
-        return None
-    try:
-        rel = Path(abs_path).resolve(strict=False).relative_to(
-            Path(media_root).resolve(strict=False)
-        )
-    except ValueError:
-        return None
-    return f"/media/{rel.as_posix()}"
+def _asset_url(abs_path_or_url: str | None, media_root: str, app_data_root: str) -> str | None:
+    return to_public_asset_url(
+        abs_path_or_url,
+        media_root=media_root,
+        app_data_root=app_data_root,
+    )
 
 
-def _hls_playlist_url(video_id: uuid.UUID, media_root: str) -> str | None:
-    playlist = Path(media_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
+def _hls_playlist_url(video_id: uuid.UUID, app_data_root: str) -> str | None:
+    playlist = Path(app_data_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
     if not playlist.exists():
         return None
-    return f"/media/{settings.HLS_DIR}/{video_id}/index.m3u8"
+    return f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8"
 
 
-def _video_to_read(video: Video, media_root: str, transcoding_enabled: bool) -> VideoRead:
-    video_url = _to_media_url(video.file_path, media_root)
-    hls_url = _hls_playlist_url(video.id, media_root) if transcoding_enabled else None
+def _video_to_read(
+    video: Video,
+    media_root: str,
+    app_data_root: str,
+    transcoding_enabled: bool,
+) -> VideoRead:
+    video_url = _asset_url(video.file_path, media_root, app_data_root)
+    hls_url = _hls_playlist_url(video.id, app_data_root) if transcoding_enabled else None
     return VideoRead(
         id=video.id,
         title=video.title,
@@ -58,7 +61,7 @@ def _video_to_read(video: Video, media_root: str, transcoding_enabled: bool) -> 
         artist_name=video.artist.name if video.artist else "",
         album=video.album,
         duration=video.duration,
-        thumbnail_url=_to_media_url(video.thumbnail_path, media_root),
+        thumbnail_url=_asset_url(video.thumbnail_path, media_root, app_data_root),
         video_url=video_url,
         playback_url=hls_url or video_url,
         year=video.year,
@@ -168,9 +171,10 @@ async def get_watchlist(
         )
 
     media_root = await get_effective_media_path(db)
+    app_data_root = await get_effective_app_data_path(db)
     transcoding_enabled = await get_effective_transcoding_enabled(db)
     videos = [
-        _video_to_read(item.video, media_root, transcoding_enabled)
+        _video_to_read(item.video, media_root, app_data_root, transcoding_enabled)
         for item in watchlist.items
         if item.video and item.video.deleted_at is None
     ]
