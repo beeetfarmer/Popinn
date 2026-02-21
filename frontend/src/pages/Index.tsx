@@ -11,16 +11,39 @@ import PageTransition from "@/components/PageTransition";
 export default function Index() {
   const { data: videos = [], isLoading: videosLoading, isError: videosError } = useQuery<MusicVideo[]>({
     queryKey: ["videos"],
-    queryFn: () => api.get("/videos/"),
+    queryFn: () => api.get("/videos/?limit=200"),
   });
 
   const { data: artists = [], isLoading: artistsLoading, isError: artistsError } = useQuery<Artist[]>({
     queryKey: ["artists"],
-    queryFn: () => api.get("/artists/"),
+    queryFn: () => api.get("/artists/?limit=200"),
   });
 
   const recentVideos = useMemo(() => videos.slice(0, 6), [videos]);
-  const recentArtists = useMemo(() => artists.slice(0, 6), [artists]);
+  const recentArtists = useMemo(() => {
+    const artistsById = new Map(artists.map((artist) => [artist.id, artist]));
+    const seen = new Set<string>();
+    const recent: Artist[] = [];
+
+    for (const video of videos) {
+      if (seen.has(video.artist_id)) continue;
+      const artist = artistsById.get(video.artist_id);
+      if (!artist) continue;
+      seen.add(video.artist_id);
+      recent.push(artist);
+      if (recent.length >= 6) break;
+    }
+
+    if (recent.length >= 6) return recent;
+
+    for (const artist of artists) {
+      if (seen.has(artist.id)) continue;
+      recent.push(artist);
+      if (recent.length >= 6) break;
+    }
+
+    return recent;
+  }, [artists, videos]);
   const randomVideos = useMemo(() => {
     if (videos.length <= 6) return [...videos].sort(() => Math.random() - 0.5);
     const shuffled = [...videos].sort(() => Math.random() - 0.5);
