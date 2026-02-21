@@ -21,6 +21,7 @@ class Video(Base):
     file_path: Mapped[str] = mapped_column(String(1000), unique=True, nullable=False)
     duration: Mapped[int | None] = mapped_column(Integer)
     thumbnail_path: Mapped[str | None] = mapped_column(String(1000))
+    preview_path: Mapped[str | None] = mapped_column(String(1000))
     album: Mapped[str | None] = mapped_column(String(255))
     year: Mapped[int | None] = mapped_column(Integer)
     genre: Mapped[str | None] = mapped_column(String(100))

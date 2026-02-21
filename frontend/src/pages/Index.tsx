@@ -18,6 +18,7 @@ import {
 
 const RECENT_VIDEOS_CAROUSEL_LIMIT = 15;
 const RECENT_ARTISTS_CAROUSEL_LIMIT = 12;
+const RANDOM_PICKS_CAROUSEL_LIMIT = 15;
 
 function toTimestamp(value: string | null | undefined): number {
   if (!value) return 0;
@@ -80,9 +81,11 @@ export default function Index() {
     [recentArtists]
   );
   const randomVideos = useMemo(() => {
-    if (videos.length <= 6) return [...videos].sort(() => Math.random() - 0.5);
+    if (videos.length <= RANDOM_PICKS_CAROUSEL_LIMIT) {
+      return [...videos].sort(() => Math.random() - 0.5);
+    }
     const shuffled = [...videos].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, 6);
+    return shuffled.slice(0, RANDOM_PICKS_CAROUSEL_LIMIT);
   }, [videos]);
 
   return (
@@ -184,11 +187,23 @@ export default function Index() {
         {randomVideos.length > 0 && (
           <section>
             <SectionHeader title="Random Picks" />
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-              {randomVideos.map((v) => (
-                <VideoCard key={v.id} video={v} />
-              ))}
-            </div>
+            <Carousel
+              opts={{ align: "start", containScroll: "trimSnaps" }}
+              className=""
+            >
+              <CarouselContent>
+                {randomVideos.map((v) => (
+                  <CarouselItem
+                    key={v.id}
+                    className="basis-1/2 sm:basis-1/3 lg:basis-1/4 xl:basis-1/6"
+                  >
+                    <VideoCard video={v} />
+                  </CarouselItem>
+                ))}
+              </CarouselContent>
+              <CarouselPrevious className="-left-4 top-[38%] transition-opacity disabled:pointer-events-none disabled:opacity-0" />
+              <CarouselNext className="-right-4 top-[38%]" />
+            </Carousel>
           </section>
         )}
       </div>

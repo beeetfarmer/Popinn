@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     SPOTIFY_CLIENT_ID: str = ""
     SPOTIFY_CLIENT_SECRET: str = ""
     THUMBNAIL_DIR: str = ".thumbnails"
+    PREVIEW_DIR: str = ".previews"
     HLS_DIR: str = ".hls"
 
     model_config = {

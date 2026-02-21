@@ -105,3 +105,62 @@ def generate_hls(video_path: str, output_dir: str) -> str | None:
     except Exception:
         logger.exception("Error generating HLS for %s", video_path)
         return None
+
+
+def generate_preview_clip(
+    video_path: str,
+    output_path: str,
+    *,
+    start_seconds: int = 5,
+    clip_seconds: int = 10,
+) -> bool:
+    """Generate a low-bitrate, muted preview clip for UI autoplay previews."""
+    try:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        safe_start = max(0, int(start_seconds))
+        safe_duration = max(2, int(clip_seconds))
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-ss",
+                str(safe_start),
+                "-i",
+                video_path,
+                "-t",
+                str(safe_duration),
+                "-vf",
+                "scale=-2:360:force_original_aspect_ratio=decrease",
+                "-c:v",
+                "libx264",
+                "-profile:v",
+                "baseline",
+                "-level",
+                "3.0",
+                "-preset",
+                "veryfast",
+                "-b:v",
+                "500k",
+                "-maxrate",
+                "700k",
+                "-bufsize",
+                "1000k",
+                "-an",
+                "-movflags",
+                "+faststart",
+                "-y",
+                output_path,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "ffmpeg preview clip failed for %s: %s",
+                video_path,
+                result.stderr[:500],
+            )
+            return False
+        return Path(output_path).exists()
+    except Exception:
+        logger.exception("Error generating preview clip for %s", video_path)
+        return False
