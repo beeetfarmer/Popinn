@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Music } from "lucide-react";
+import { Loader2, Music } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -26,23 +26,36 @@ const loginSchema = z.object({
 type LoginValues = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [error, setError] = useState("");
 
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || "/";
+  const redirectTo = from === "/login" || from === "/register" ? "/" : from;
 
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
   });
 
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-7 w-7 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to={redirectTo} replace />;
+  }
+
   async function onSubmit(values: LoginValues) {
     setError("");
     try {
       await login(values.email, values.password);
-      navigate(from, { replace: true });
+      navigate(redirectTo, { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);

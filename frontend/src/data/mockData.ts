@@ -1,10 +1,12 @@
 export interface Artist {
   id: string;
   name: string;
+  lastfm_artist_name?: string | null;
   bio: string | null;
   image_url: string | null;
   video_count: number;
   play_count?: number;
+  created_at?: string | null;
 }
 
 export interface MusicVideo {
