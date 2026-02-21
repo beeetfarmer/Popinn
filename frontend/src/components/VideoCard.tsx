@@ -18,6 +18,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
@@ -50,9 +60,13 @@ const VIDEO_HOVER_PREVIEW_ENABLED_KEY = "videoHoverPreviewEnabled";
 
 function getStoredHoverPreviewEnabled(): boolean {
   if (typeof window === "undefined") return true;
-  const value = window.localStorage.getItem(VIDEO_HOVER_PREVIEW_ENABLED_KEY);
-  if (value === null) return true;
-  return value === "1";
+  try {
+    const value = window.localStorage.getItem(VIDEO_HOVER_PREVIEW_ENABLED_KEY);
+    if (value === null) return true;
+    return value === "1";
+  } catch {
+    return true;
+  }
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -67,6 +81,9 @@ export default function VideoCard({ video }: VideoCardProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [hoverPreviewEnabled] = useState(getStoredHoverPreviewEnabled);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [createWatchlistOpen, setCreateWatchlistOpen] = useState(false);
+  const [deleteVideoOpen, setDeleteVideoOpen] = useState(false);
+  const [newWatchlistName, setNewWatchlistName] = useState("");
   const [editOpen, setEditOpen] = useState(false);
   const [editTitle, setEditTitle] = useState(video.title);
   const [editAlbum, setEditAlbum] = useState(video.album || "");
@@ -105,15 +122,17 @@ export default function VideoCard({ video }: VideoCardProps) {
     },
   });
 
-  const createAndAdd = useMutation({
-    mutationFn: async () => {
-      const wl = await api.post<WatchlistItem>("/watchlists/", { name: "Watch Later" });
+  const createWatchlistAndAdd = useMutation({
+    mutationFn: async (name: string) => {
+      const wl = await api.post<WatchlistItem>("/watchlists/", { name });
       await api.post(`/watchlists/${wl.id}/videos`, { video_id: video.id });
       return wl;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["watchlists"] });
-      toast.success('Created "Watch Later" and added video');
+      setCreateWatchlistOpen(false);
+      setNewWatchlistName("");
+      toast.success("Created watchlist and added video");
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed")),
   });
@@ -148,15 +167,19 @@ export default function VideoCard({ video }: VideoCardProps) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["videos"] });
       queryClient.invalidateQueries({ queryKey: ["search-videos"] });
+      setDeleteVideoOpen(false);
       toast.success("Video deleted");
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to delete")),
   });
 
-  function handleAddToWatchlist() {
-    if (watchlists.length === 0) {
-      createAndAdd.mutate();
+  function handleCreateWatchlistAndAdd() {
+    const name = newWatchlistName.trim();
+    if (!name) {
+      toast.error("Enter a watchlist name");
+      return;
     }
+    createWatchlistAndAdd.mutate(name);
   }
 
   function openEditDialog() {
@@ -255,13 +278,13 @@ export default function VideoCard({ video }: VideoCardProps) {
                 </DropdownMenuItem>
               )}
 
-              {watchlists.length > 0 ? (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <ListPlus className="mr-2 h-4 w-4" /> Add to Watchlist
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-44">
-                    {watchlists.map((wl) => (
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <ListPlus className="mr-2 h-4 w-4" /> Add to Watchlist
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-52">
+                  {watchlists.length > 0 ? (
+                    watchlists.map((wl) => (
                       <DropdownMenuItem
                         key={wl.id}
                         onClick={() => addToWatchlist.mutate(wl.id)}
@@ -272,23 +295,32 @@ export default function VideoCard({ video }: VideoCardProps) {
                           {wl.item_count}
                         </span>
                       </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              ) : (
-                <DropdownMenuItem onClick={handleAddToWatchlist}>
-                  <ListPlus className="mr-2 h-4 w-4" /> Add to Watchlist
-                </DropdownMenuItem>
-              )}
+                    ))
+                  ) : (
+                    <DropdownMenuItem disabled>
+                      No watchlists yet
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setCreateWatchlistOpen(true);
+                    }}
+                  >
+                    <ListPlus className="mr-2 h-4 w-4" />
+                    Create New Watchlist
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
 
               {isAdmin && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={() => {
-                      if (confirm(`Delete "${video.title}"?`)) {
-                        deleteMutation.mutate();
-                      }
+                      setMenuOpen(false);
+                      setDeleteVideoOpen(true);
                     }}
                     className="text-destructive focus:text-destructive"
                   >
@@ -371,6 +403,62 @@ export default function VideoCard({ video }: VideoCardProps) {
               disabled={editMutation.isPending || !editTitle.trim()}
             >
               {editMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteVideoOpen} onOpenChange={setDeleteVideoOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete video?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Delete "{video.title}" from the library. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Create watchlist dialog */}
+      <Dialog
+        open={createWatchlistOpen}
+        onOpenChange={(open) => {
+          setCreateWatchlistOpen(open);
+          if (!open) setNewWatchlistName("");
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Watchlist</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              value={newWatchlistName}
+              onChange={(e) => setNewWatchlistName(e.target.value)}
+              placeholder="Watchlist name"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleCreateWatchlistAndAdd();
+                }
+              }}
+            />
+            <Button
+              onClick={handleCreateWatchlistAndAdd}
+              className="w-full"
+              disabled={createWatchlistAndAdd.isPending || !newWatchlistName.trim()}
+            >
+              {createWatchlistAndAdd.isPending ? "Creating..." : "Create & Add"}
             </Button>
           </div>
         </DialogContent>

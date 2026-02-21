@@ -26,6 +26,16 @@ import {
   Shuffle,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const PER_PAGE = 12;
 
@@ -42,6 +52,7 @@ export default function MusicVideosPage() {
   const [filterGenre, setFilterGenre] = useState("all");
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false);
 
   const { data: videos = [], isLoading: videosLoading, isError: videosError } = useQuery<MusicVideo[]>({
     queryKey: ["videos"],
@@ -116,6 +127,7 @@ export default function MusicVideosPage() {
       toast.success(`Deleted ${selected.size} video${selected.size > 1 ? "s" : ""}`);
       setSelected(new Set());
       setSelectMode(false);
+      setDeleteSelectedOpen(false);
     },
     onError: (err: any) => toast.error(err.message || "Failed to delete"),
   });
@@ -182,11 +194,7 @@ export default function MusicVideosPage() {
                   variant="destructive"
                   size="sm"
                   disabled={selected.size === 0 || bulkDelete.isPending}
-                  onClick={() => {
-                    if (confirm(`Delete ${selected.size} video${selected.size > 1 ? "s" : ""}?`)) {
-                      bulkDelete.mutate();
-                    }
-                  }}
+                  onClick={() => setDeleteSelectedOpen(true)}
                 >
                   <Trash2 className="mr-1 h-4 w-4" />
                   Delete ({selected.size})
@@ -309,6 +317,28 @@ export default function MusicVideosPage() {
           </div>
         )}
       </div>
+
+      <AlertDialog open={deleteSelectedOpen} onOpenChange={setDeleteSelectedOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete selected videos?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will delete {selected.size} video{selected.size !== 1 ? "s" : ""} from the library.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDelete.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => bulkDelete.mutate()}
+              disabled={bulkDelete.isPending || selected.size === 0}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDelete.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PageTransition>
   );
 }

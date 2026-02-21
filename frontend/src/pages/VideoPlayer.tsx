@@ -54,8 +54,12 @@ const VIDEO_RECOMMENDATION_SOURCE_KEY = "videoRecommendationSource";
 
 function getVideoRecommendationSource(): VideoRecommendationSource {
   if (typeof window === "undefined") return "lastfm";
-  const value = window.localStorage.getItem(VIDEO_RECOMMENDATION_SOURCE_KEY);
-  return value === "genre" ? "genre" : "lastfm";
+  try {
+    const value = window.localStorage.getItem(VIDEO_RECOMMENDATION_SOURCE_KEY);
+    return value === "genre" ? "genre" : "lastfm";
+  } catch {
+    return "lastfm";
+  }
 }
 
 function getResponsiveRecommendationLimit(): number {

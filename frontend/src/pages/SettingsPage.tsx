@@ -5,6 +5,16 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import PageTransition from "@/components/PageTransition";
@@ -79,15 +89,23 @@ const VIDEO_HOVER_PREVIEW_ENABLED_KEY = "videoHoverPreviewEnabled";
 
 function getStoredVideoRecommendationSource(): VideoRecommendationSource {
   if (typeof window === "undefined") return "lastfm";
-  const value = window.localStorage.getItem(VIDEO_RECOMMENDATION_SOURCE_KEY);
-  return value === "genre" ? "genre" : "lastfm";
+  try {
+    const value = window.localStorage.getItem(VIDEO_RECOMMENDATION_SOURCE_KEY);
+    return value === "genre" ? "genre" : "lastfm";
+  } catch {
+    return "lastfm";
+  }
 }
 
 function getStoredHoverPreviewEnabled(): boolean {
   if (typeof window === "undefined") return true;
-  const value = window.localStorage.getItem(VIDEO_HOVER_PREVIEW_ENABLED_KEY);
-  if (value === null) return true;
-  return value === "1";
+  try {
+    const value = window.localStorage.getItem(VIDEO_HOVER_PREVIEW_ENABLED_KEY);
+    if (value === null) return true;
+    return value === "1";
+  } catch {
+    return true;
+  }
 }
 
 function getCookie(name: string): string | null {
@@ -130,6 +148,7 @@ export default function SettingsPage() {
   const [viewThresholdPercent, setViewThresholdPercent] = useState(20);
   const [lastfmOverrideLocalArtistImages, setLastfmOverrideLocalArtistImages] =
     useState(true);
+  const [pendingDeleteUser, setPendingDeleteUser] = useState<UserItem | null>(null);
 
   const isAdmin = user?.role === "admin";
 
@@ -149,6 +168,7 @@ export default function SettingsPage() {
     mutationFn: (userId: string) => api.delete(`/auth/users/${userId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      setPendingDeleteUser(null);
       toast.success("User deleted");
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to delete user")),
@@ -299,15 +319,23 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(VIDEO_RECOMMENDATION_SOURCE_KEY, videoRecommendationSource);
+    try {
+      window.localStorage.setItem(VIDEO_RECOMMENDATION_SOURCE_KEY, videoRecommendationSource);
+    } catch {
+      // Ignore storage failures; setting still applies for this session.
+    }
   }, [videoRecommendationSource]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(
-      VIDEO_HOVER_PREVIEW_ENABLED_KEY,
-      hoverPreviewEnabled ? "1" : "0"
-    );
+    try {
+      window.localStorage.setItem(
+        VIDEO_HOVER_PREVIEW_ENABLED_KEY,
+        hoverPreviewEnabled ? "1" : "0"
+      );
+    } catch {
+      // Ignore storage failures; setting still applies for this session.
+    }
   }, [hoverPreviewEnabled]);
 
   async function handleScan() {
@@ -770,9 +798,7 @@ export default function SettingsPage() {
                   {u.id !== user?.id && (
                     <button
                       onClick={() => {
-                        if (confirm(`Delete user "${u.username}"? This cannot be undone.`)) {
-                          deleteMutation.mutate(u.id);
-                        }
+                        setPendingDeleteUser(u);
                       }}
                       className="rounded p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                     >
@@ -785,6 +811,36 @@ export default function SettingsPage() {
           </section>
         )}
       </div>
+
+      <AlertDialog
+        open={!!pendingDeleteUser}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteUser(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete user?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteUser
+                ? `Delete user "${pendingDeleteUser.username}". This action cannot be undone.`
+                : "Delete this user. This action cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingDeleteUser) deleteMutation.mutate(pendingDeleteUser.id);
+              }}
+              disabled={deleteMutation.isPending || !pendingDeleteUser}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PageTransition>
   );
 }
