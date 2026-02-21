@@ -26,9 +26,13 @@ from app.schemas.settings import (
 from app.services.background_jobs import submit_job
 from app.services.playback import is_counted_view
 from app.services.runtime_settings import (
+    SETTING_APP_DATA_PATH,
+    SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES,
     SETTING_MEDIA_PATH,
     SETTING_TRANSCODING_ENABLED,
     SETTING_VIEW_THRESHOLD_RATIO,
+    get_effective_app_data_path,
+    get_effective_lastfm_override_local_artist_images,
     get_effective_media_path,
     get_effective_transcoding_enabled,
     get_effective_view_threshold_ratio,
@@ -71,8 +75,10 @@ async def get_runtime_settings(
     threshold_ratio = await get_effective_view_threshold_ratio(db)
     return RuntimeSettingsRead(
         media_path=await get_effective_media_path(db),
+        app_data_path=await get_effective_app_data_path(db),
         transcoding_enabled=await get_effective_transcoding_enabled(db),
         view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
+        lastfm_override_local_artist_images=await get_effective_lastfm_override_local_artist_images(db),
     )
 
 
@@ -87,10 +93,23 @@ async def update_runtime_settings(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Media path does not exist or is not a directory",
         )
+    try:
+        os.makedirs(body.app_data_path, exist_ok=True)
+    except OSError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="App data path could not be created",
+        )
+    if not os.path.isdir(body.app_data_path):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="App data path does not exist or is not a directory",
+        )
 
     existing_threshold_ratio = await get_effective_view_threshold_ratio(db)
 
     await set_setting_value(db, SETTING_MEDIA_PATH, body.media_path)
+    await set_setting_value(db, SETTING_APP_DATA_PATH, body.app_data_path)
     await set_setting_value(
         db,
         SETTING_TRANSCODING_ENABLED,
@@ -101,6 +120,11 @@ async def update_runtime_settings(
         db,
         SETTING_VIEW_THRESHOLD_RATIO,
         str(threshold_ratio),
+    )
+    await set_setting_value(
+        db,
+        SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES,
+        "true" if body.lastfm_override_local_artist_images else "false",
     )
     if abs(existing_threshold_ratio - threshold_ratio) > 1e-9:
         await db.execute(
@@ -123,8 +147,10 @@ async def update_runtime_settings(
 
     return RuntimeSettingsRead(
         media_path=body.media_path,
+        app_data_path=body.app_data_path,
         transcoding_enabled=body.transcoding_enabled,
         view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
+        lastfm_override_local_artist_images=body.lastfm_override_local_artist_images,
     )
 
 

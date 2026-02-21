@@ -11,7 +11,10 @@ from app.models.system import ScanJob
 from app.models.user import User
 from app.schemas.scan import ScanJobRead, ScanTriggerResponse
 from app.services.background_jobs import submit_job
-from app.tasks.scan import run_library_scan
+from app.tasks.scan import (
+    run_artist_metadata_refresh_scan,
+    run_library_scan,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,26 @@ async def run_scan_direct(
     return ScanTriggerResponse(
         job_id=job.id,
         message="Scan queued",
+    )
+
+
+@router.post("/artist-metadata/run", response_model=ScanTriggerResponse, status_code=status.HTTP_202_ACCEPTED)
+async def run_artist_metadata_scan(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger artist bio/image metadata refresh from Last.fm."""
+    _ = admin
+    job = ScanJob()
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    submit_job("artist-metadata-scan", run_artist_metadata_refresh_scan, str(job.id))
+
+    return ScanTriggerResponse(
+        job_id=job.id,
+        message="Artist metadata refresh queued",
     )
 
 
