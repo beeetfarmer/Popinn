@@ -2,7 +2,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.models.artist import Artist
 from app.models.subtitle import Subtitle, SubtitleFormat
 from app.models.video import Video
-from app.services.lastfm import download_artist_image, fetch_artist_info
+from app.services.lastfm import (
+    download_artist_image,
+    fetch_artist_info,
+    is_lastfm_attributed_bio,
+)
 from app.services.metadata import extract_metadata, generate_thumbnail
 
 logger = logging.getLogger(__name__)
@@ -173,6 +177,7 @@ def run_scan(
     session_factory: sessionmaker,
     media_path: str,
     lastfm_api_key: str,
+    lastfm_cache_ttl_hours: int,
     thumbnail_dir: str,
     progress_callback: ScanProgressCallback | None = None,
 ) -> ScanResult:
@@ -211,16 +216,49 @@ def run_scan(
                     has_real_image = os.path.getsize(artist.image_path) > 10_000
                 needs_image = not has_real_image
 
-                # Fetch Last.fm info for new artists or artists missing/placeholder images
-                if lastfm_api_key and (is_new or needs_image or not artist.bio):
+                is_lastfm_image = bool(artist.image_path and Path(artist.image_path).name == ".artist.jpg")
+                bio_is_lastfm = is_lastfm_attributed_bio(artist.bio)
+                ttl_hours = max(1, int(lastfm_cache_ttl_hours))
+                now_utc = datetime.now(timezone.utc)
+                cache_stale = (
+                    artist.lastfm_fetched_at is None
+                    or artist.lastfm_fetched_at <= now_utc - timedelta(hours=ttl_hours)
+                )
+
+                # Refresh Last.fm metadata if missing or stale; stale third-party data is not kept forever.
+                should_refresh_lastfm = bool(lastfm_api_key) and (
+                    is_new
+                    or needs_image
+                    or not artist.bio
+                    or (cache_stale and (bio_is_lastfm or is_lastfm_image))
+                )
+
+                if should_refresh_lastfm:
                     info = fetch_artist_info(artist_name, lastfm_api_key)
                     if info:
-                        if info.get("bio") and not artist.bio:
+                        fetched_bio = info.get("bio")
+                        fetched_image_url = info.get("image_url")
+
+                        if fetched_bio and (not artist.bio or bio_is_lastfm or cache_stale):
                             artist.bio = info["bio"]
-                        if info.get("image_url") and needs_image:
+                        elif cache_stale and bio_is_lastfm and not fetched_bio:
+                            artist.bio = None
+
+                        if fetched_image_url and (needs_image or is_lastfm_image or cache_stale):
                             img_path = os.path.join(entry.path, ".artist.jpg")
-                            if download_artist_image(info["image_url"], img_path):
+                            if download_artist_image(fetched_image_url, img_path):
                                 artist.image_path = img_path
+                        elif cache_stale and is_lastfm_image and not fetched_image_url:
+                            artist.image_path = None
+
+                        artist.lastfm_fetched_at = now_utc
+                    elif cache_stale:
+                        if bio_is_lastfm:
+                            artist.bio = None
+                        if is_lastfm_image:
+                            artist.image_path = None
+                        if bio_is_lastfm or is_lastfm_image:
+                            artist.lastfm_fetched_at = None
                     session.flush()
 
                 # Collect video files in this artist folder

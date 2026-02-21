@@ -17,6 +17,7 @@ class Artist(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     bio: Mapped[str | None] = mapped_column(Text)
     image_path: Mapped[str | None] = mapped_column(String(500))
+    lastfm_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -82,6 +82,7 @@ def run_library_scan(scan_job_id: str) -> dict:
             session_factory=session_factory,
             media_path=media_path,
             lastfm_api_key=settings.LASTFM_API_KEY,
+            lastfm_cache_ttl_hours=settings.LASTFM_CACHE_TTL_HOURS,
             thumbnail_dir=settings.THUMBNAIL_DIR,
             progress_callback=progress_callback,
         )
