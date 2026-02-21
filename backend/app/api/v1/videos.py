@@ -7,13 +7,21 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_admin
+from app.api.deps import get_current_admin, get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.artist import Artist
+from app.models.playback import VideoPlay
 from app.models.user import User
 from app.models.video import Video
-from app.schemas.video import VideoBulkDelete, VideoRead, VideoUpdate
+from app.schemas.video import (
+    VideoBulkDelete,
+    VideoPlayCreate,
+    VideoPlayRead,
+    VideoPlayStats,
+    VideoRead,
+    VideoUpdate,
+)
 from app.services.background_jobs import submit_job
 from app.services.runtime_settings import (
     get_effective_media_path,
@@ -122,6 +130,75 @@ async def get_video(video_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     return _video_to_read(video, video.artist.name if video.artist else "", media_root, transcoding_enabled)
 
 
+async def _get_active_video(video_id: uuid.UUID, db: AsyncSession) -> Video:
+    video = await db.scalar(select(Video).where(Video.id == video_id, Video.deleted_at.is_(None)))
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+    return video
+
+
+@router.post("/{video_id}/plays", response_model=VideoPlayRead, status_code=status.HTTP_201_CREATED)
+async def record_video_play(
+    video_id: uuid.UUID,
+    body: VideoPlayCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    video = await _get_active_video(video_id, db)
+    watched_seconds = max(0, int(round(body.watched_seconds)))
+    duration = body.video_duration_seconds or video.duration
+    counted_play = bool(duration and duration > 0 and watched_seconds >= (duration * 0.5))
+
+    play = VideoPlay(
+        video_id=video.id,
+        user_id=user.id,
+        watched_seconds=watched_seconds,
+        video_duration_seconds=duration,
+        counted_play=counted_play,
+    )
+    db.add(play)
+    await db.commit()
+    await db.refresh(play)
+    return play
+
+
+@router.get("/{video_id}/plays", response_model=VideoPlayStats)
+async def get_video_play_stats(
+    video_id: uuid.UUID,
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _ = await _get_active_video(video_id, db)
+
+    play_count_result = await db.execute(
+        select(func.count(VideoPlay.id)).where(
+            VideoPlay.video_id == video_id,
+            VideoPlay.counted_play.is_(True),
+        )
+    )
+    play_count = play_count_result.scalar() or 0
+
+    total_watched_result = await db.execute(
+        select(func.coalesce(func.sum(VideoPlay.watched_seconds), 0)).where(
+            VideoPlay.video_id == video_id
+        )
+    )
+    total_watched_seconds = int(total_watched_result.scalar() or 0)
+
+    history_result = await db.execute(
+        select(VideoPlay)
+        .where(VideoPlay.video_id == video_id)
+        .order_by(VideoPlay.played_at.desc())
+        .limit(50)
+    )
+    history = history_result.scalars().all()
+    return VideoPlayStats(
+        play_count=play_count,
+        total_watched_seconds=total_watched_seconds,
+        history=history,
+    )
+
+
 @router.patch("/{video_id}", response_model=VideoRead)
 async def update_video(
     video_id: uuid.UUID,
@@ -155,9 +232,7 @@ async def queue_hls_generation(
     _admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    video = await db.scalar(select(Video).where(Video.id == video_id, Video.deleted_at.is_(None)))
-    if not video:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+    _ = await _get_active_video(video_id, db)
     task_id = submit_job("hls_generation", generate_hls_for_video, str(video_id))
     return {"message": "HLS generation queued", "task_id": task_id}
 
