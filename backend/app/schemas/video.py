@@ -60,3 +60,13 @@ class VideoPlayStats(BaseModel):
     play_count: int
     total_watched_seconds: int
     history: list[VideoPlayRead]
+
+
+class SpotifyTrackMatch(BaseModel):
+    spotify_track_id: str
+    title: str
+    album: str | None = None
+    year: int | None = None
+    genre: str | None = None
+    artist_name: str | None = None
+    artist_names: list[str] = []

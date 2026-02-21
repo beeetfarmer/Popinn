@@ -36,6 +36,16 @@ interface VideoCardProps {
   video: MusicVideo;
 }
 
+interface SpotifyTrackMatch {
+  spotify_track_id: string;
+  title: string;
+  album: string | null;
+  year: number | null;
+  genre: string | null;
+  artist_name: string | null;
+  artist_names: string[];
+}
+
 export default function VideoCard({ video }: VideoCardProps) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -46,6 +56,9 @@ export default function VideoCard({ video }: VideoCardProps) {
   const [editAlbum, setEditAlbum] = useState(video.album || "");
   const [editYear, setEditYear] = useState(video.year?.toString() || "");
   const [editGenre, setEditGenre] = useState(video.genre || "");
+  const [spotifyQuery, setSpotifyQuery] = useState(video.title);
+  const [spotifySearching, setSpotifySearching] = useState(false);
+  const [spotifyResults, setSpotifyResults] = useState<SpotifyTrackMatch[]>([]);
 
   const { data: watchlists = [] } = useQuery<WatchlistItem[]>({
     queryKey: ["watchlists"],
@@ -88,7 +101,14 @@ export default function VideoCard({ video }: VideoCardProps) {
       const body: Record<string, unknown> = {};
       if (editTitle.trim() !== video.title) body.title = editTitle.trim();
       if (editAlbum.trim() !== (video.album || "")) body.album = editAlbum.trim() || null;
-      if (editYear.trim() !== (video.year?.toString() || "")) body.year = editYear.trim() ? parseInt(editYear.trim()) : null;
+      if (editYear.trim() !== (video.year?.toString() || "")) {
+        if (!editYear.trim()) {
+          body.year = null;
+        } else {
+          const parsedYear = parseInt(editYear.trim(), 10);
+          body.year = Number.isNaN(parsedYear) ? null : parsedYear;
+        }
+      }
       if (editGenre.trim() !== (video.genre || "")) body.genre = editGenre.trim() || null;
       return api.patch(`/videos/${video.id}`, body);
     },
@@ -115,6 +135,47 @@ export default function VideoCard({ video }: VideoCardProps) {
     if (watchlists.length === 0) {
       createAndAdd.mutate();
     }
+  }
+
+  function openEditDialog() {
+    setEditTitle(video.title);
+    setEditAlbum(video.album || "");
+    setEditYear(video.year?.toString() || "");
+    setEditGenre(video.genre || "");
+    setSpotifyQuery(video.title);
+    setSpotifyResults([]);
+    setEditOpen(true);
+  }
+
+  async function searchSpotify() {
+    const q = spotifyQuery.trim();
+    if (!q) {
+      toast.error("Enter a track name to search Spotify");
+      return;
+    }
+    setSpotifySearching(true);
+    try {
+      const res = await api.get<SpotifyTrackMatch[]>(
+        `/videos/spotify/search?q=${encodeURIComponent(q)}&artist_name=${encodeURIComponent(video.artist_name)}&limit=8`
+      );
+      setSpotifyResults(res);
+      if (res.length === 0) {
+        toast.info("No Spotify matches found");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to search Spotify");
+    } finally {
+      setSpotifySearching(false);
+    }
+  }
+
+  function applySpotifyTrack(match: SpotifyTrackMatch) {
+    setEditTitle(match.title || editTitle);
+    setEditAlbum(match.album || "");
+    setEditYear(match.year ? String(match.year) : "");
+    setEditGenre(match.genre || "");
+    setSpotifyQuery(match.title || spotifyQuery);
+    toast.success("Metadata fetched from Spotify");
   }
 
   return (
@@ -151,7 +212,7 @@ export default function VideoCard({ video }: VideoCardProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               {isAdmin && (
-                <DropdownMenuItem onClick={() => { setMenuOpen(false); setEditOpen(true); }}>
+                <DropdownMenuItem onClick={() => { setMenuOpen(false); openEditDialog(); }}>
                   <Pencil className="mr-2 h-4 w-4" /> Edit
                 </DropdownMenuItem>
               )}
@@ -209,6 +270,45 @@ export default function VideoCard({ video }: VideoCardProps) {
             <DialogTitle>Edit Video</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            <div className="rounded-md border border-border p-3">
+              <label className="mb-1 block text-sm font-medium text-foreground">Match from Spotify</label>
+              <div className="flex gap-2">
+                <Input
+                  value={spotifyQuery}
+                  onChange={(e) => setSpotifyQuery(e.target.value)}
+                  placeholder="Search Spotify track..."
+                />
+                <Button
+                  variant="secondary"
+                  onClick={searchSpotify}
+                  disabled={spotifySearching || !spotifyQuery.trim()}
+                >
+                  {spotifySearching ? "Searching..." : "Search"}
+                </Button>
+              </div>
+              {spotifyResults.length > 0 && (
+                <div className="mt-2 max-h-44 space-y-1 overflow-y-auto pr-1">
+                  {spotifyResults.map((item) => (
+                    <button
+                      key={item.spotify_track_id}
+                      type="button"
+                      onClick={() => applySpotifyTrack(item)}
+                      className="w-full rounded-md border border-border px-2 py-1.5 text-left transition-colors hover:bg-secondary"
+                    >
+                      <p className="truncate text-xs font-semibold text-foreground">{item.title}</p>
+                      <p className="truncate text-[11px] text-muted-foreground">
+                        {(item.artist_names && item.artist_names.length > 0 ? item.artist_names.join(", ") : item.artist_name) || "Unknown artist"}
+                        {item.album ? ` · ${item.album}` : ""}
+                        {item.year ? ` · ${item.year}` : ""}
+                      </p>
+                      {item.genre && (
+                        <p className="truncate text-[11px] text-muted-foreground">Genre: {item.genre}</p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-foreground">Title</label>
               <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />

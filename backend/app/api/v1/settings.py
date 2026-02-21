@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import json
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, status
 import os
-from sqlalchemy import select
+from sqlalchemy import and_, case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
@@ -23,11 +23,14 @@ from app.schemas.settings import (
     ThumbnailRegenerateResponse,
 )
 from app.services.background_jobs import submit_job
+from app.services.playback import is_counted_view
 from app.services.runtime_settings import (
     SETTING_MEDIA_PATH,
     SETTING_TRANSCODING_ENABLED,
+    SETTING_VIEW_THRESHOLD_RATIO,
     get_effective_media_path,
     get_effective_transcoding_enabled,
+    get_effective_view_threshold_ratio,
     set_setting_value,
 )
 from app.tasks.media import regenerate_all_thumbnails
@@ -64,9 +67,11 @@ async def get_runtime_settings(
     _admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    threshold_ratio = await get_effective_view_threshold_ratio(db)
     return RuntimeSettingsRead(
         media_path=await get_effective_media_path(db),
         transcoding_enabled=await get_effective_transcoding_enabled(db),
+        view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
     )
 
 
@@ -82,16 +87,43 @@ async def update_runtime_settings(
             detail="Media path does not exist or is not a directory",
         )
 
+    existing_threshold_ratio = await get_effective_view_threshold_ratio(db)
+
     await set_setting_value(db, SETTING_MEDIA_PATH, body.media_path)
     await set_setting_value(
         db,
         SETTING_TRANSCODING_ENABLED,
         "true" if body.transcoding_enabled else "false",
     )
+    threshold_ratio = max(0.01, min(1.0, body.view_threshold_percent / 100))
+    await set_setting_value(
+        db,
+        SETTING_VIEW_THRESHOLD_RATIO,
+        str(threshold_ratio),
+    )
+    if abs(existing_threshold_ratio - threshold_ratio) > 1e-9:
+        await db.execute(
+            update(VideoPlay).values(
+                counted_play=case(
+                    (
+                        and_(
+                            VideoPlay.video_duration_seconds.is_not(None),
+                            VideoPlay.video_duration_seconds > 0,
+                            VideoPlay.watched_seconds
+                            >= (VideoPlay.video_duration_seconds * threshold_ratio),
+                        ),
+                        True,
+                    ),
+                    else_=False,
+                )
+            )
+        )
+        await db.commit()
 
     return RuntimeSettingsRead(
         media_path=body.media_path,
         transcoding_enabled=body.transcoding_enabled,
+        view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
     )
 
 
@@ -181,6 +213,7 @@ async def import_settings_and_history(
 
     user_cache: dict[str, User | None] = {}
     video_cache: dict[str, Video | None] = {}
+    threshold_ratio = await get_effective_view_threshold_ratio(db)
 
     for play_item in payload.get("playback_history", []):
         email = str(play_item.get("user_email") or "").strip()
@@ -246,7 +279,11 @@ async def import_settings_and_history(
         if isinstance(counted_play, bool):
             is_counted_play = counted_play
         else:
-            is_counted_play = bool(duration and duration > 0 and watched_seconds >= (duration * 0.5))
+            is_counted_play = is_counted_view(
+                watched_seconds=watched_seconds,
+                video_duration_seconds=duration,
+                threshold_ratio=threshold_ratio,
+            )
 
         db.add(
             VideoPlay(
