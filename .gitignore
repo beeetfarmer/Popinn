@@ -16,9 +16,12 @@ env/
 
 # Environment variables
 .env
+.env.*
+!.env.example
 .env.local
 .env.*.local
 backend/.env
+backend/.env.*
 
 # Logs
 logs/
@@ -55,6 +58,9 @@ docker-compose.override.yml
 # Media (user uploads)
 media/
 test-media/
+app-data/
+app-data-dev/
+backend/app-data/
 # Testing / Coverage
 coverage/
 htmlcov/

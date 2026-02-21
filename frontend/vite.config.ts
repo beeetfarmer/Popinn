@@ -2,21 +2,23 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
+const proxyTarget = process.env.VITE_API_PROXY_TARGET || "http://localhost:8471";
+
 export default defineConfig({
   server: {
     host: "::",
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://localhost:8471",
+        target: proxyTarget,
         changeOrigin: true,
       },
       "/media": {
-        target: "http://localhost:8471",
+        target: proxyTarget,
         changeOrigin: true,
       },
       "/data": {
-        target: "http://localhost:8471",
+        target: proxyTarget,
         changeOrigin: true,
       },
     },

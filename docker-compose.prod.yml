@@ -1,0 +1,100 @@
+name: popinn-prod
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    init: true
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-popinn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-popinn}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-popinn} -d ${POSTGRES_DB:-popinn}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: beeetfarmer/popinn-backend:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-popinn}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-popinn}
+      MEDIA_PATH: /media
+      APP_DATA_PATH: /app-data
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      STREAM_TOKENIZATION_ENABLED: ${STREAM_TOKENIZATION_ENABLED:-true}
+      STREAM_TOKEN_REQUIRED: ${STREAM_TOKEN_REQUIRED:-false}
+      STREAM_TOKEN_TTL_SECONDS: ${STREAM_TOKEN_TTL_SECONDS:-21600}
+    command: >
+      sh -lc "alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8471"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: "1.5"
+    volumes:
+      - ${POPINN_MEDIA_PATH:-./media}:/media:ro
+      - ${POPINN_APPDATA_PATH:-./app-data}:/app-data
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8471/api/v1/health/ready || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+
+  web:
+    image: beeetfarmer/popinn-web:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: prod
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+      - /var/cache/nginx:size=64m,noexec,nosuid,nodev
+      - /var/run:size=8m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: "0.5"
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+
+volumes:
+  postgres_data:
