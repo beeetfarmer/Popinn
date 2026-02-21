@@ -11,6 +11,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import PageTransition from "@/components/PageTransition";
 import { Plus, ListVideo, Trash2, Pencil, LayoutGrid, List } from "lucide-react";
 import { toast } from "sonner";
@@ -47,6 +57,7 @@ export default function WatchlistsPage() {
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<WatchlistItem | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "cards">(() => {
     try {
       const stored = localStorage.getItem(WATCHLIST_VIEW_MODE_KEY);
@@ -111,6 +122,7 @@ export default function WatchlistsPage() {
     mutationFn: (id: string) => api.delete(`/watchlists/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      setDeleteTarget(null);
       toast.success("Watchlist deleted");
     },
     onError: () => toast.error("Failed to delete watchlist"),
@@ -242,9 +254,7 @@ export default function WatchlistsPage() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm(`Delete "${wl.name}"?`)) {
-                      deleteMutation.mutate(wl.id);
-                    }
+                    setDeleteTarget(wl);
                   }}
                   className="rounded p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                   title="Delete watchlist"
@@ -296,9 +306,7 @@ export default function WatchlistsPage() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (confirm(`Delete "${wl.name}"?`)) {
-                            deleteMutation.mutate(wl.id);
-                          }
+                          setDeleteTarget(wl);
                         }}
                         className="rounded bg-background/80 p-1.5 text-muted-foreground transition-colors hover:text-destructive"
                         title="Delete watchlist"
@@ -344,6 +352,36 @@ export default function WatchlistsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete watchlist?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget
+                ? `Delete "${deleteTarget.name}" watchlist. Videos in your library will not be deleted.`
+                : "Delete this watchlist. Videos in your library will not be deleted."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+              }}
+              disabled={deleteMutation.isPending || !deleteTarget}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PageTransition>
   );
 }

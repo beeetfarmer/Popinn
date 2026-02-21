@@ -13,6 +13,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ArrowLeft, Trash2, Pencil, Play, Shuffle } from "lucide-react";
 import { toast } from "sonner";
 import { useQueue } from "@/contexts/QueueContext";
@@ -32,6 +42,7 @@ export default function WatchlistDetail() {
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState("");
+  const [deleteWatchlistOpen, setDeleteWatchlistOpen] = useState(false);
 
   const { data: watchlist, isLoading } = useQuery<WatchlistDetailData>({
     queryKey: ["watchlist", id],
@@ -81,6 +92,7 @@ export default function WatchlistDetail() {
     mutationFn: () => api.delete(`/watchlists/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      setDeleteWatchlistOpen(false);
       toast.success("Watchlist deleted");
       navigate("/watchlists");
     },
@@ -138,9 +150,7 @@ export default function WatchlistDetail() {
               </button>
               <button
                 onClick={() => {
-                  if (confirm(`Delete "${watchlist.name}"?`)) {
-                    deleteMutation.mutate();
-                  }
+                  setDeleteWatchlistOpen(true);
                 }}
                 className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                 title="Delete watchlist"
@@ -207,6 +217,27 @@ export default function WatchlistDetail() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteWatchlistOpen} onOpenChange={setDeleteWatchlistOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete watchlist?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Delete "{watchlist.name}" watchlist. Videos in your library will not be deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PageTransition>
   );
 }
