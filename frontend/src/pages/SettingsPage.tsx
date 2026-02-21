@@ -4,7 +4,6 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import PageTransition from "@/components/PageTransition";
@@ -28,6 +27,9 @@ interface ScanJob {
   completed_at: string | null;
   files_found: number | null;
   files_added: number | null;
+  folders_total?: number | null;
+  folders_processed?: number | null;
+  current_folder?: string | null;
   errors: string | null;
   message?: string;
 }
@@ -284,13 +286,38 @@ export default function SettingsPage() {
             {scanning && (
               <div className="space-y-2">
                 <div className="h-2 overflow-hidden rounded-full bg-secondary">
-                  <div className="h-full animate-pulse rounded-full bg-primary" style={{ width: "100%" }} />
+                  {scanStatus?.folders_total && scanStatus.folders_total > 0 ? (
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-500"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.round(
+                            ((scanStatus.folders_processed || 0) / scanStatus.folders_total) * 100
+                          )
+                        )}%`,
+                      }}
+                    />
+                  ) : (
+                    <div className="h-full animate-pulse rounded-full bg-primary" style={{ width: "100%" }} />
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {scanStatus?.status === "running"
-                    ? "Scanning media directory..."
-                    : "Starting scan..."}
-                </p>
+                {scanStatus?.status === "running" ? (
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    <p>
+                      {scanStatus.current_folder
+                        ? `Scanning folder: ${scanStatus.current_folder}`
+                        : "Scanning media directory..."}
+                    </p>
+                    {scanStatus.folders_total && scanStatus.folders_total > 0 && (
+                      <p>
+                        Progress: {scanStatus.folders_processed || 0}/{scanStatus.folders_total} folders
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Starting scan...</p>
+                )}
               </div>
             )}
 
@@ -410,87 +437,84 @@ export default function SettingsPage() {
           </section>
         )}
 
-        {/* Playback */}
-        <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-          <h2 className="text-lg font-semibold text-foreground">Playback</h2>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="autoplay">Autoplay next video</Label>
-            <Switch id="autoplay" checked={autoplay} onCheckedChange={setAutoplay} />
-          </div>
-        </section>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Playback */}
+          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+            <h2 className="text-lg font-semibold text-foreground">Playback</h2>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="autoplay">Autoplay next video</Label>
+              <Switch id="autoplay" checked={autoplay} onCheckedChange={setAutoplay} />
+            </div>
+          </section>
 
-        <Separator />
-
-        {/* Notifications */}
-        <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-          <h2 className="text-lg font-semibold text-foreground">Notifications</h2>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="notif">Enable notifications</Label>
-            <Switch id="notif" checked={notifications} onCheckedChange={setNotifications} />
-          </div>
-        </section>
+          {/* Notifications */}
+          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+            <h2 className="text-lg font-semibold text-foreground">Notifications</h2>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="notif">Enable notifications</Label>
+              <Switch id="notif" checked={notifications} onCheckedChange={setNotifications} />
+            </div>
+          </section>
+        </div>
 
         {/* Admin: User Management */}
         {isAdmin && (
-          <>
-            <Separator />
-            <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-              <div className="flex items-center gap-2">
-                <Shield className="h-5 w-5 text-primary" />
-                <h2 className="text-lg font-semibold text-foreground">User Management</h2>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Manage registered users. Only admins can see this section.
+          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+            <div className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">User Management</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Manage registered users. Only admins can see this section.
+            </p>
+
+            {users.length === 0 && (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                No users found
               </p>
+            )}
 
-              {users.length === 0 && (
-                <p className="py-4 text-center text-sm text-muted-foreground">
-                  No users found
-                </p>
-              )}
-
-              <div className="space-y-3">
-                {users.map((u) => (
-                  <div
-                    key={u.id}
-                    className="flex items-center gap-4 rounded-lg border border-border p-3"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-foreground">{u.username}</span>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                            u.role === "admin"
-                              ? "bg-primary/15 text-primary"
-                              : "bg-secondary text-muted-foreground"
-                          }`}
-                        >
-                          {u.role}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">{u.email}</p>
-                      <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                        <Calendar className="h-2.5 w-2.5" />
-                        Joined {new Date(u.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    {u.id !== user?.id && (
-                      <button
-                        onClick={() => {
-                          if (confirm(`Delete user "${u.username}"? This cannot be undone.`)) {
-                            deleteMutation.mutate(u.id);
-                          }
-                        }}
-                        className="rounded p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+            <div className="space-y-3">
+              {users.map((u) => (
+                <div
+                  key={u.id}
+                  className="flex items-center gap-4 rounded-lg border border-border p-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-foreground">{u.username}</span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          u.role === "admin"
+                            ? "bg-primary/15 text-primary"
+                            : "bg-secondary text-muted-foreground"
+                        }`}
                       >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    )}
+                        {u.role}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{u.email}</p>
+                    <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <Calendar className="h-2.5 w-2.5" />
+                      Joined {new Date(u.created_at).toLocaleDateString()}
+                    </p>
                   </div>
-                ))}
-              </div>
-            </section>
-          </>
+                  {u.id !== user?.id && (
+                    <button
+                      onClick={() => {
+                        if (confirm(`Delete user "${u.username}"? This cannot be undone.`)) {
+                          deleteMutation.mutate(u.id);
+                        }
+                      }}
+                      className="rounded p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
         )}
       </div>
     </PageTransition>
