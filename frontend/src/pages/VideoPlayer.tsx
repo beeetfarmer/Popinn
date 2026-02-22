@@ -118,6 +118,7 @@ export default function VideoPlayer() {
   const playClockStartedAtRef = useRef<number | null>(null);
   const watchedSecondsRef = useRef(0);
   const submittingPlayRef = useRef(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const { data: video } = useQuery<MusicVideo>({
     queryKey: ["video", id],
@@ -130,6 +131,7 @@ export default function VideoPlayer() {
     queryFn: () => api.get(`/videos/${id}/subtitles`),
     enabled: !!id,
   });
+  const videoElementKey = `${id || "video"}:${subtitles.map((s) => s.id).join(",")}`;
 
   const { data: playStats, refetch: refetchPlayStats } = useQuery<VideoPlayStats>({
     queryKey: ["video-play-stats", id],
@@ -235,6 +237,26 @@ export default function VideoPlayer() {
     setRecommendationPage(1);
   }, [id, recommendationBaseLimit]);
 
+  useEffect(() => {
+    if (!subtitles.length) return;
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+
+    const timer = window.setTimeout(() => {
+      try {
+        const textTracks = videoEl.textTracks;
+        if (!textTracks || textTracks.length === 0) return;
+        for (let i = 0; i < textTracks.length; i += 1) {
+          textTracks[i].mode = i === 0 ? "showing" : "disabled";
+        }
+      } catch {
+        // Ignore browser-specific text track errors.
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [id, subtitles]);
+
   if (!video) {
     return <p className="text-muted-foreground">Loading...</p>;
   }
@@ -288,6 +310,8 @@ export default function VideoPlayer() {
                   </div>
                 ) : null}
                 <video
+                  key={videoElementKey}
+                  ref={videoRef}
                   src={sourceUrl}
                   poster={video.thumbnail_url || undefined}
                   controls
@@ -313,7 +337,7 @@ export default function VideoPlayer() {
                     setVideoError(true);
                     setVideoLoading(false);
                   }}
-                  crossOrigin="anonymous"
+                  crossOrigin="use-credentials"
                 >
                   {subtitles.map((sub, i) => (
                     <track

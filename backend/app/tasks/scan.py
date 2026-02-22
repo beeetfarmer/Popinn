@@ -10,6 +10,7 @@ from app.services.runtime_settings import (
     get_effective_lastfm_override_local_artist_images_sync,
     get_effective_media_path_sync,
 )
+from app.services.background_jobs import is_cancel_requested
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +95,12 @@ def run_library_scan(scan_job_id: str) -> dict:
             preview_dir=settings.PREVIEW_DIR,
             override_local_artist_images=override_local_artist_images,
             progress_callback=progress_callback,
+            should_cancel=lambda: is_cancel_requested(scan_job_id),
         )
 
         with session_factory() as session:
             job = session.get(ScanJob, scan_job_id)
-            job.status = ScanStatus.completed
+            job.status = ScanStatus.failed if result.cancelled else ScanStatus.completed
             job.completed_at = datetime.now(timezone.utc)
             job.files_found = result.files_found
             job.files_added = result.files_added
@@ -109,6 +111,12 @@ def run_library_scan(scan_job_id: str) -> dict:
             job.errors = json.dumps(result.errors) if result.errors else None
             session.commit()
 
+        if result.cancelled:
+            return {
+                "status": "cancelled",
+                "files_found": result.files_found,
+                "files_added": result.files_added,
+            }
         return {
             "status": "completed",
             "files_found": result.files_found,
@@ -178,11 +186,12 @@ def run_artist_metadata_refresh_scan(scan_job_id: str) -> dict:
             lastfm_api_key=settings.LASTFM_API_KEY,
             override_local_artist_images=override_local_artist_images,
             progress_callback=progress_callback,
+            should_cancel=lambda: is_cancel_requested(scan_job_id),
         )
 
         with session_factory() as session:
             job = session.get(ScanJob, scan_job_id)
-            job.status = ScanStatus.completed
+            job.status = ScanStatus.failed if result.cancelled else ScanStatus.completed
             job.completed_at = datetime.now(timezone.utc)
             job.files_found = result.files_found
             job.files_added = result.files_added
@@ -193,6 +202,12 @@ def run_artist_metadata_refresh_scan(scan_job_id: str) -> dict:
             job.errors = json.dumps(result.errors) if result.errors else None
             session.commit()
 
+        if result.cancelled:
+            return {
+                "status": "cancelled",
+                "artists_processed": result.files_found,
+                "artists_updated": result.files_added,
+            }
         return {
             "status": "completed",
             "artists_processed": result.files_found,
