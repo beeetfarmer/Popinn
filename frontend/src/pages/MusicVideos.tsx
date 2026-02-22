@@ -81,7 +81,8 @@ export default function MusicVideosPage() {
     }
 
     list.sort((a, b) => {
-      let valA: any, valB: any;
+      let valA: string | number;
+      let valB: string | number;
       switch (sortBy) {
         case "title":
           valA = a.title.toLowerCase();
@@ -129,7 +130,8 @@ export default function MusicVideosPage() {
       setSelectMode(false);
       setDeleteSelectedOpen(false);
     },
-    onError: (err: any) => toast.error(err.message || "Failed to delete"),
+    onError: (err: unknown) =>
+      toast.error(err instanceof Error ? err.message : "Failed to delete"),
   });
 
   function toggleSelect(id: string) {
