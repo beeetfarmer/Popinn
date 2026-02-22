@@ -1,4 +1,4 @@
-name: popinn-prod
+name: popinn
 
 services:
   db:
@@ -25,9 +25,6 @@ services:
 
   backend:
     image: beeetfarmer/popinn-backend:${TAG:-latest}
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
     restart: unless-stopped
     init: true
     env_file:
@@ -67,10 +64,6 @@ services:
 
   web:
     image: beeetfarmer/popinn-web:${TAG:-latest}
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-      target: prod
     restart: unless-stopped
     init: true
     read_only: true

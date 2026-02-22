@@ -9,8 +9,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-popinn}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # ports:
+    #   - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-popinn} -d ${POSTGRES_DB:-popinn}"]
       interval: 10s
@@ -25,6 +25,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-popinn}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-popinn}
+      PYTHONPATH: /app/backend
       MEDIA_PATH: /media
       APP_DATA_PATH: /app-data
       ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
@@ -34,15 +35,23 @@ services:
       ALLOW_RUNTIME_PATH_CHANGES: "true"
       STREAM_TOKENIZATION_ENABLED: "false"
       STREAM_TOKEN_REQUIRED: "false"
+    user: "0:0"
+    working_dir: /app/backend
     command: >
       sh -lc "alembic upgrade head &&
       uvicorn app.main:app --host 0.0.0.0 --port 8471 --reload"
     volumes:
-      - ./backend:/app/backend
-      - ${POPINN_DEV_MEDIA_PATH:-./test-media}:/media
-      - ${POPINN_DEV_APPDATA_PATH:-./app-data-dev}:/app-data
+      - ./backend:/app/backend:Z
+      - ${POPINN_DEV_MEDIA_PATH:-./test-media}:/media:Z
+      - ${POPINN_DEV_APPDATA_PATH:-./app-data-dev}:/app-data:Z
     ports:
       - "8471:8471"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8471/api/v1/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
     depends_on:
       db:
         condition: service_healthy
@@ -52,6 +61,8 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
       target: dev
+    working_dir: /app/frontend
+    user: "0:0"
     environment:
       VITE_API_PROXY_TARGET: http://backend:8471
     command: >
@@ -59,12 +70,13 @@ services:
       then npm ci; fi &&
       npm run dev -- --host 0.0.0.0 --port 5173"
     volumes:
-      - ./frontend:/app/frontend
+      - ./frontend:/app/frontend:Z
       - frontend_node_modules:/app/frontend/node_modules
     ports:
       - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
