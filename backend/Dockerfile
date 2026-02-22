@@ -25,4 +25,7 @@ USER 10001:10001
 
 EXPOSE 8471
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8471/api/v1/health/live || exit 1
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8471"]
