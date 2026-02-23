@@ -89,3 +89,4 @@ frontend/bun.lockb
 =*
 
 *.md
+docker-compose.prod.yml

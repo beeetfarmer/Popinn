@@ -19,6 +19,10 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // These canary rules are useful for greenfield refactors but too noisy for
+      // current app patterns (state sync effects / deliberate randomized UI picks).
+      "react-hooks/purity": "off",
+      "react-hooks/set-state-in-effect": "off",
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-unused-vars": "off",
     },

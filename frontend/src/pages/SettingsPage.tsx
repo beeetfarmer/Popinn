@@ -86,6 +86,8 @@ type VideoRecommendationSource = "lastfm" | "genre";
 
 const VIDEO_RECOMMENDATION_SOURCE_KEY = "videoRecommendationSource";
 const VIDEO_HOVER_PREVIEW_ENABLED_KEY = "videoHoverPreviewEnabled";
+const ACTIVE_LIBRARY_SCAN_JOB_KEY = "activeLibraryScanJobId";
+const ACTIVE_ARTIST_METADATA_SCAN_JOB_KEY = "activeArtistMetadataScanJobId";
 
 function getStoredVideoRecommendationSource(): VideoRecommendationSource {
   if (typeof window === "undefined") return "lastfm";
@@ -137,6 +139,7 @@ export default function SettingsPage() {
   const [scanJobId, setScanJobId] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<ScanJob | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [cancellingScan, setCancellingScan] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [artistMetadataJobId, setArtistMetadataJobId] = useState<string | null>(null);
   const [artistMetadataStatus, setArtistMetadataStatus] = useState<ScanJob | null>(null);
@@ -268,9 +271,14 @@ export default function SettingsPage() {
       setScanStatus(job);
       if (job.status === "completed" || job.status === "failed") {
         setScanning(false);
+        setCancellingScan(false);
+        setScanJobId(jobId);
         if (pollRef.current) {
           clearInterval(pollRef.current);
           pollRef.current = null;
+        }
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(ACTIVE_LIBRARY_SCAN_JOB_KEY);
         }
         // Refresh data
         queryClient.invalidateQueries({ queryKey: ["videos"] });
@@ -278,7 +286,12 @@ export default function SettingsPage() {
         if (job.status === "completed") {
           toast.success(`Scan complete: ${job.files_found} found, ${job.files_added} added`);
         } else {
-          toast.error("Scan failed");
+          const isCancelled = (job.errors || "").toLowerCase().includes("cancel");
+          if (isCancelled) {
+            toast.info("Scan cancelled");
+          } else {
+            toast.error("Scan failed");
+          }
         }
       }
     } catch {
@@ -292,9 +305,13 @@ export default function SettingsPage() {
       setArtistMetadataStatus(job);
       if (job.status === "completed" || job.status === "failed") {
         setArtistMetadataScanning(false);
+        setArtistMetadataJobId(jobId);
         if (artistMetadataPollRef.current) {
           clearInterval(artistMetadataPollRef.current);
           artistMetadataPollRef.current = null;
+        }
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(ACTIVE_ARTIST_METADATA_SCAN_JOB_KEY);
         }
         queryClient.invalidateQueries({ queryKey: ["artists"] });
         if (job.status === "completed") {
@@ -316,6 +333,65 @@ export default function SettingsPage() {
       if (artistMetadataPollRef.current) clearInterval(artistMetadataPollRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function resumeScanPolling() {
+      if (typeof window === "undefined") return;
+
+      const libraryJobId = window.localStorage.getItem(ACTIVE_LIBRARY_SCAN_JOB_KEY);
+      if (libraryJobId) {
+        try {
+          const job = await api.get<ScanJob>(`/scan/jobs/${libraryJobId}`);
+          if (cancelled) return;
+          setScanJobId(libraryJobId);
+          setScanStatus(job);
+          if (job.status === "running" || job.status === "pending") {
+            setScanning(true);
+            if (!pollRef.current) {
+              pollRef.current = setInterval(() => pollScanStatus(libraryJobId), 2000);
+            }
+          } else {
+            window.localStorage.removeItem(ACTIVE_LIBRARY_SCAN_JOB_KEY);
+            setScanning(false);
+          }
+        } catch {
+          window.localStorage.removeItem(ACTIVE_LIBRARY_SCAN_JOB_KEY);
+        }
+      }
+
+      const artistJobId = window.localStorage.getItem(ACTIVE_ARTIST_METADATA_SCAN_JOB_KEY);
+      if (artistJobId) {
+        try {
+          const job = await api.get<ScanJob>(`/scan/jobs/${artistJobId}`);
+          if (cancelled) return;
+          setArtistMetadataJobId(artistJobId);
+          setArtistMetadataStatus(job);
+          if (job.status === "running" || job.status === "pending") {
+            setArtistMetadataScanning(true);
+            if (!artistMetadataPollRef.current) {
+              artistMetadataPollRef.current = setInterval(
+                () => pollArtistMetadataStatus(artistJobId),
+                2000
+              );
+            }
+          } else {
+            window.localStorage.removeItem(ACTIVE_ARTIST_METADATA_SCAN_JOB_KEY);
+            setArtistMetadataScanning(false);
+          }
+        } catch {
+          window.localStorage.removeItem(ACTIVE_ARTIST_METADATA_SCAN_JOB_KEY);
+        }
+      }
+    }
+
+    void resumeScanPolling();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pollArtistMetadataStatus, pollScanStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -347,6 +423,9 @@ export default function SettingsPage() {
       const resp = await api.post<{ job_id: string; message: string }>("/scan/run");
       const jobId = resp.job_id;
       setScanJobId(jobId);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ACTIVE_LIBRARY_SCAN_JOB_KEY, jobId);
+      }
 
       // Start polling
       pollRef.current = setInterval(() => pollScanStatus(jobId), 2000);
@@ -354,7 +433,20 @@ export default function SettingsPage() {
       setTimeout(() => pollScanStatus(jobId), 1000);
     } catch (error: unknown) {
       setScanning(false);
+      setCancellingScan(false);
       toast.error(getErrorMessage(error, "Failed to start scan"));
+    }
+  }
+
+  async function handleCancelScan() {
+    if (!scanJobId || !scanning || cancellingScan) return;
+    setCancellingScan(true);
+    try {
+      await api.post<{ job_id: string; message: string }>(`/scan/jobs/${scanJobId}/cancel`);
+      toast.info("Scan cancel requested");
+    } catch (error: unknown) {
+      setCancellingScan(false);
+      toast.error(getErrorMessage(error, "Failed to cancel scan"));
     }
   }
 
@@ -367,6 +459,9 @@ export default function SettingsPage() {
       const resp = await api.post<{ job_id: string; message: string }>("/scan/artist-metadata/run");
       const jobId = resp.job_id;
       setArtistMetadataJobId(jobId);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ACTIVE_ARTIST_METADATA_SCAN_JOB_KEY, jobId);
+      }
 
       artistMetadataPollRef.current = setInterval(() => pollArtistMetadataStatus(jobId), 2000);
       setTimeout(() => pollArtistMetadataStatus(jobId), 1000);
@@ -433,6 +528,17 @@ export default function SettingsPage() {
             {/* Scan progress */}
             {scanning && (
               <div className="space-y-2">
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancelScan}
+                    disabled={!scanJobId || cancellingScan}
+                  >
+                    {cancellingScan ? "Cancelling..." : "Cancel Scan"}
+                  </Button>
+                </div>
                 <div className="h-2 overflow-hidden rounded-full bg-secondary">
                   {scanStatus?.folders_total && scanStatus.folders_total > 0 ? (
                     <div
@@ -462,6 +568,9 @@ export default function SettingsPage() {
                         Progress: {scanStatus.folders_processed || 0}/{scanStatus.folders_total} folders
                       </p>
                     )}
+                    <p>
+                      Files: {scanStatus.files_found || 0} found, {scanStatus.files_added || 0} added
+                    </p>
                   </div>
                 ) : (
                   <p className="text-xs text-muted-foreground">Starting scan...</p>
@@ -493,7 +602,11 @@ export default function SettingsPage() {
                     </>
                   ) : (
                     <>
-                      <p className="font-medium text-destructive">Scan failed</p>
+                      <p className="font-medium text-destructive">
+                        {(scanStatus.errors || "").toLowerCase().includes("cancel")
+                          ? "Scan cancelled"
+                          : "Scan failed"}
+                      </p>
                       {scanStatus.errors && (
                         <p className="text-muted-foreground">{scanStatus.errors}</p>
                       )}

@@ -1,4 +1,6 @@
+import json
 import logging
+from datetime import datetime, timezone
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_admin
 from app.core.database import get_db
 from app.models.system import ScanJob
+from app.models.system import ScanStatus
 from app.models.user import User
 from app.schemas.scan import ScanJobRead, ScanTriggerResponse
-from app.services.background_jobs import submit_job
+from app.services.background_jobs import request_cancel, submit_job
 from app.tasks.scan import (
     run_artist_metadata_refresh_scan,
     run_library_scan,
@@ -33,7 +36,7 @@ async def run_scan_direct(
     await db.commit()
     await db.refresh(job)
 
-    submit_job("scan", run_library_scan, str(job.id))
+    submit_job("scan", run_library_scan, str(job.id), cancel_key=str(job.id))
 
     return ScanTriggerResponse(
         job_id=job.id,
@@ -53,7 +56,12 @@ async def run_artist_metadata_scan(
     await db.commit()
     await db.refresh(job)
 
-    submit_job("artist-metadata-scan", run_artist_metadata_refresh_scan, str(job.id))
+    submit_job(
+        "artist-metadata-scan",
+        run_artist_metadata_refresh_scan,
+        str(job.id),
+        cancel_key=str(job.id),
+    )
 
     return ScanTriggerResponse(
         job_id=job.id,
@@ -88,3 +96,44 @@ async def get_scan_job(
             detail="Scan job not found",
         )
     return job
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=ScanTriggerResponse)
+async def cancel_scan_job(
+    job_id: uuid.UUID,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Request cancellation for a running/pending scan job."""
+    _ = admin
+    result = await db.execute(select(ScanJob).where(ScanJob.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan job not found",
+        )
+    if job.status in {"completed", "failed"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Scan job is already finished",
+        )
+    if not request_cancel(str(job_id)):
+        # If backend restarted, the in-memory worker/cancel token is gone but the DB job may
+        # still be marked running. Recover it here so the UI doesn't stay stuck forever.
+        job.status = ScanStatus.failed
+        job.completed_at = datetime.now(timezone.utc)
+        job.current_folder = None
+        existing_errors: list[str] = []
+        if job.errors:
+            try:
+                parsed = json.loads(job.errors)
+                if isinstance(parsed, list):
+                    existing_errors = [str(item) for item in parsed]
+            except Exception:
+                existing_errors = [job.errors]
+        existing_errors.append("Scan cancelled after backend restart (orphaned job recovered)")
+        job.errors = json.dumps(existing_errors)
+        await db.commit()
+        return ScanTriggerResponse(job_id=job_id, message="Orphaned scan job recovered and cancelled")
+    return ScanTriggerResponse(job_id=job_id, message="Cancel requested")

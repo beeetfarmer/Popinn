@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import json
 import logging
 from pathlib import Path
 import time
@@ -9,6 +11,7 @@ from fastapi import Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import extract_access_token_from_request, get_user_from_access_token
@@ -19,6 +22,7 @@ from app.core.distributed_rate_limit import distributed_rate_limiter
 from app.core.http_security import enforce_csrf_for_request
 from app.core.logging_setup import configure_logging
 from app.core.rate_limit import rate_limiter
+from app.models.system import ScanJob, ScanStatus
 from app.services.background_jobs import shutdown_background_jobs
 from app.services.runtime_settings import (
     get_effective_app_data_path,
@@ -29,9 +33,37 @@ from app.services.stream_tokens import validate_stream_token_for_resource
 logger = logging.getLogger(__name__)
 
 
+async def _recover_orphaned_scan_jobs() -> None:
+    async with async_session() as db:
+        result = await db.execute(
+            select(ScanJob).where(ScanJob.status.in_([ScanStatus.pending, ScanStatus.running]))
+        )
+        jobs = result.scalars().all()
+        if not jobs:
+            return
+        now = datetime.now(timezone.utc)
+        for job in jobs:
+            existing_errors: list[str] = []
+            if job.errors:
+                try:
+                    parsed = json.loads(job.errors)
+                    if isinstance(parsed, list):
+                        existing_errors = [str(item) for item in parsed]
+                except Exception:
+                    existing_errors = [job.errors]
+            existing_errors.append("Scan interrupted by backend restart")
+            job.status = ScanStatus.failed
+            job.completed_at = now
+            job.current_folder = None
+            job.errors = json.dumps(existing_errors)
+        await db.commit()
+        logger.warning("Recovered %s orphaned scan job(s) after startup", len(jobs))
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_logging()
+    await _recover_orphaned_scan_jobs()
     try:
         yield
     finally:
@@ -190,16 +222,16 @@ async def serve_media(
     requested_path: str,
     request: Request,
     st: str | None = Query(None, alias="st", max_length=4096),
-    db: AsyncSession = Depends(get_db),
 ):
-    await _authorize_stream_or_user(
-        request,
-        db,
-        resource_path=f"/media/{requested_path}",
-        stream_token=st,
-    )
-    media_root = Path(await get_effective_media_path(db)).resolve(strict=False)
-    file_path = (media_root / requested_path).resolve(strict=False)
+    async with async_session() as db:
+        await _authorize_stream_or_user(
+            request,
+            db,
+            resource_path=f"/media/{requested_path}",
+            stream_token=st,
+        )
+        media_root = Path(await get_effective_media_path(db)).resolve(strict=False)
+        file_path = (media_root / requested_path).resolve(strict=False)
     try:
         file_path.relative_to(media_root)
     except ValueError:
@@ -214,20 +246,20 @@ async def serve_app_data(
     requested_path: str,
     request: Request,
     st: str | None = Query(None, alias="st", max_length=4096),
-    db: AsyncSession = Depends(get_db),
 ):
-    await _authorize_stream_or_user(
-        request,
-        db,
-        resource_path=f"/data/{requested_path}",
-        stream_token=st,
-    )
-    request_parts = Path(requested_path).parts
-    if not request_parts or request_parts[0] not in settings.app_data_public_subdirs:
-        raise HTTPException(status_code=404, detail="File not found")
+    async with async_session() as db:
+        await _authorize_stream_or_user(
+            request,
+            db,
+            resource_path=f"/data/{requested_path}",
+            stream_token=st,
+        )
+        request_parts = Path(requested_path).parts
+        if not request_parts or request_parts[0] not in settings.app_data_public_subdirs:
+            raise HTTPException(status_code=404, detail="File not found")
 
-    app_data_root = Path(await get_effective_app_data_path(db)).resolve(strict=False)
-    file_path = (app_data_root / requested_path).resolve(strict=False)
+        app_data_root = Path(await get_effective_app_data_path(db)).resolve(strict=False)
+        file_path = (app_data_root / requested_path).resolve(strict=False)
     try:
         file_path.relative_to(app_data_root)
     except ValueError:

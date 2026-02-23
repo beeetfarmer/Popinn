@@ -28,12 +28,18 @@ logger = logging.getLogger(__name__)
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".webm", ".mov"}
 SUBTITLE_EXTENSIONS = {".srt", ".vtt"}
 ScanProgressCallback = Callable[[int, int, str | None, int, int], None]
+CancelCheckCallback = Callable[[], bool]
+
+
+class ScanCancelledError(Exception):
+    pass
 
 
 @dataclass
 class ScanResult:
     files_found: int = 0
     files_added: int = 0
+    cancelled: bool = False
     errors: list[str] = field(default_factory=list)
 
 
@@ -217,6 +223,59 @@ def _process_subtitles(
     session.flush()
 
 
+def _process_subtitles_for_video(
+    session: Session,
+    *,
+    artist_dir: str,
+    video_filename: str,
+    video: Video,
+    media_root: Path,
+) -> None:
+    """Attach subtitles for a single video by matching sibling subtitle files."""
+    import re
+
+    stem = Path(video_filename).stem
+
+    for entry in os.scandir(artist_dir):
+        if not entry.is_file(follow_symlinks=False):
+            continue
+        if not _is_within_root(entry.path, media_root):
+            continue
+        ext = Path(entry.name).suffix.lower()
+        if ext not in SUBTITLE_EXTENSIONS:
+            continue
+
+        sub_stem = Path(entry.name).stem
+        language = "und"
+        matched = sub_stem == stem
+        if not matched:
+            lang_match = re.match(r"^(.+)\.([a-z]{2,3})$", sub_stem)
+            if lang_match:
+                base_stem, lang_code = lang_match.groups()
+                if base_stem == stem:
+                    matched = True
+                    language = lang_code
+        if not matched:
+            continue
+
+        existing = session.execute(
+            select(Subtitle).where(Subtitle.file_path == entry.path)
+        ).scalar_one_or_none()
+        if existing:
+            continue
+
+        fmt = SubtitleFormat.srt if ext == ".srt" else SubtitleFormat.vtt
+        session.add(
+            Subtitle(
+                video_id=video.id,
+                file_path=entry.path,
+                language=language,
+                format=fmt,
+            )
+        )
+    session.flush()
+
+
 def _soft_delete_missing(session: Session, media_path: str) -> None:
     """Soft-delete videos whose files no longer exist on disk."""
     media_root = Path(media_path).resolve(strict=False)
@@ -229,6 +288,11 @@ def _soft_delete_missing(session: Session, media_path: str) -> None:
     session.flush()
 
 
+def _raise_if_cancelled(should_cancel: CancelCheckCallback | None) -> None:
+    if should_cancel and should_cancel():
+        raise ScanCancelledError("Scan cancelled by user")
+
+
 def run_scan(
     session_factory: sessionmaker,
     media_path: str,
@@ -239,6 +303,7 @@ def run_scan(
     preview_dir: str,
     override_local_artist_images: bool = True,
     progress_callback: ScanProgressCallback | None = None,
+    should_cancel: CancelCheckCallback | None = None,
 ) -> ScanResult:
     """Walk media_path and sync all artists/videos/subtitles to the DB."""
     result = ScanResult()
@@ -264,6 +329,7 @@ def run_scan(
                 progress_callback(folders_total, 0, None, result.files_found, result.files_added)
 
             for idx, entry in enumerate(artist_entries):
+                _raise_if_cancelled(should_cancel)
                 if progress_callback:
                     progress_callback(
                         folders_total,
@@ -342,6 +408,7 @@ def run_scan(
                 video_map: dict[str, Video] = {}
                 artist_added_count = 0
                 for fentry in sorted(os.scandir(entry.path), key=lambda e: e.name):
+                    _raise_if_cancelled(should_cancel)
                     if not fentry.is_file(follow_symlinks=False):
                         continue
                     if not _is_within_root(fentry.path, media_root):
@@ -377,18 +444,39 @@ def run_scan(
                             ):
                                 session.flush()
                             video_map[Path(fentry.name).stem] = video
+                            _process_subtitles_for_video(
+                                session,
+                                artist_dir=entry.path,
+                                video_filename=fentry.name,
+                                video=video,
+                                media_root=media_root,
+                            )
+                        # Commit per video so newly added items become visible during long scans.
+                        session.commit()
                     except Exception as e:
                         msg = f"Error processing {fentry.path}: {e}"
                         logger.error(msg)
                         result.errors.append(msg)
+                        session.rollback()
+                    finally:
+                        if progress_callback:
+                            progress_callback(
+                                folders_total,
+                                idx,
+                                entry.name,
+                                result.files_found,
+                                result.files_added,
+                            )
 
                 # Restore artist if new videos were added and artist was deleted
                 if artist_added_count > 0 and artist.deleted_at is not None:
                     artist.deleted_at = None
                     session.flush()
+                    session.commit()
 
                 # Process subtitles for this artist folder
                 _process_subtitles(session, entry.path, video_map, media_root)
+                session.commit()
 
                 if progress_callback:
                     progress_callback(
@@ -399,8 +487,10 @@ def run_scan(
                         result.files_added,
                     )
 
+            _raise_if_cancelled(should_cancel)
             # Soft-delete videos whose files are gone
             _soft_delete_missing(session, media_path)
+            session.commit()
             if progress_callback:
                 progress_callback(
                     folders_total,
@@ -409,8 +499,10 @@ def run_scan(
                     result.files_found,
                     result.files_added,
                 )
-
-            session.commit()
+        except ScanCancelledError as e:
+            session.rollback()
+            result.cancelled = True
+            result.errors.append(str(e))
         except Exception as e:
             session.rollback()
             msg = f"Scan failed: {e}"
@@ -425,6 +517,7 @@ def refresh_artist_metadata(
     lastfm_api_key: str,
     override_local_artist_images: bool = True,
     progress_callback: ScanProgressCallback | None = None,
+    should_cancel: CancelCheckCallback | None = None,
 ) -> ScanResult:
     """Refresh artist bio + image metadata from Last.fm for existing artists."""
     result = ScanResult()
@@ -450,6 +543,7 @@ def refresh_artist_metadata(
             updated_count = 0
             processed_count = 0
             for idx, artist in enumerate(artists):
+                _raise_if_cancelled(should_cancel)
                 if progress_callback:
                     progress_callback(total, idx, artist.name, processed_count, updated_count)
 
@@ -495,6 +589,7 @@ def refresh_artist_metadata(
                         updated_count,
                     )
 
+            _raise_if_cancelled(should_cancel)
             session.commit()
             if progress_callback:
                 progress_callback(
@@ -504,6 +599,10 @@ def refresh_artist_metadata(
                     result.files_found,
                     result.files_added,
                 )
+        except ScanCancelledError as e:
+            session.rollback()
+            result.cancelled = True
+            result.errors.append(str(e))
         except Exception as e:
             session.rollback()
             msg = f"Artist metadata refresh failed: {e}"
