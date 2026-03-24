@@ -126,7 +126,7 @@ jobs:
         run: docker build -f frontend/Dockerfile --target prod -t popinn-web:scan .
 
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: popinn-backend:scan
           vuln-type: "os,library"
@@ -135,7 +135,7 @@ jobs:
           exit-code: "1"
 
       - name: Scan web image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: popinn-web:scan
           vuln-type: "os,library"
