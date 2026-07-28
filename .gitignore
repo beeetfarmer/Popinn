@@ -88,5 +88,5 @@ frontend/bun.lockb
 # Accidental pip output artifacts
 =*
 
+# Markdown notes are kept local (covers creds.md and any scratch docs)
 *.md
-docker-compose.prod.yml

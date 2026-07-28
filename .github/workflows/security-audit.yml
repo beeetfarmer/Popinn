@@ -1,14 +1,14 @@
 name: Security Audit
 
+# The single definition of "is this tree safe to ship". Called as a reusable
+# workflow by both dev-gate.yml (before merging to main) and main-release.yml
+# (before publishing images), so the two gates can never drift apart.
 on:
+  workflow_call:
   workflow_dispatch:
   schedule:
     - cron: "0 4 * * 1"
   pull_request:
-  push:
-    branches:
-      - main
-      - new-feat
 
 permissions:
   contents: read

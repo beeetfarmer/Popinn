@@ -11,10 +11,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-popinn}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     pids_limit: 512
     mem_limit: 1g
     healthcheck:
@@ -28,9 +24,10 @@ services:
     restart: unless-stopped
     init: true
     env_file:
-      - .env
+      - ${POPINN_ENV_FILE:-.env}
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-popinn}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-popinn}
+      PYTHONPATH: /app/backend
       MEDIA_PATH: /media
       APP_DATA_PATH: /app-data
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
@@ -40,6 +37,21 @@ services:
     command: >
       sh -lc "alembic upgrade head &&
       uvicorn app.main:app --host 0.0.0.0 --port 8471"
+    working_dir: /app/backend
+    # The image runs as UID 10001, and whether that UID can write to the
+    # APPDATA bind mount depends on your container runtime. Set POPINN_USERNS
+    # in your .env to match:
+    #
+    #   Rootless podman -> POPINN_USERNS=keep-id:uid=10001,gid=10001
+    #     Without this, podman maps UID 10001 to an unprivileged subuid and the
+    #     backend cannot write thumbnails, previews or artist images (EACCES).
+    #     keep-id remaps it to your host user and keeps the container non-root.
+    #
+    #   Docker -> POPINN_USERNS=
+    #     Must be empty: Docker does not understand keep-id and will refuse to
+    #     start. Give the directory to the image's user once instead:
+    #       mkdir -p ./app-data-dev && sudo chown -R 10001:10001 ./app-data-dev
+    userns_mode: ${POPINN_USERNS:-keep-id:uid=10001,gid=10001}
     read_only: true
     tmpfs:
       - /tmp:size=128m,noexec,nosuid,nodev
@@ -52,7 +64,7 @@ services:
     cpus: "1.5"
     volumes:
       - ${POPINN_MEDIA_PATH:-./media}:/media:ro,Z
-      - ${POPINN_APPDATA_PATH:-./app-data}:/app-data:Z
+      - ${POPINN_APPDATA_PATH:-./app-data-dev}:/app-data:Z
     depends_on:
       db:
         condition: service_healthy
@@ -70,7 +82,7 @@ services:
     tmpfs:
       - /tmp:size=64m,noexec,nosuid,nodev
       - /var/cache/nginx:size=64m,noexec,nosuid,nodev
-      - /var/run:size=8m,noexec,nosuid,nodev
+      - /var/run:size=8m,nosuid,nodev
     security_opt:
       - no-new-privileges:true
     cap_drop:

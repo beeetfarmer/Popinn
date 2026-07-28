@@ -18,6 +18,8 @@ FROM docker.io/nginxinc/nginx-unprivileged:1.27-alpine AS prod
 USER root
 RUN apk upgrade --no-cache
 COPY deploy/docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY deploy/docker/nginx/05-resolver.sh /docker-entrypoint.d/05-resolver.sh
+RUN chmod +x /docker-entrypoint.d/05-resolver.sh
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
 USER 101:101
 EXPOSE 8080

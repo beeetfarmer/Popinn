@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -49,6 +49,54 @@ def _is_within_root(path: str | Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _iter_video_files(artist_dir: str, media_root: Path) -> Iterator[os.DirEntry]:
+    """Yield video files for one artist, supporting both library layouts.
+
+    Flat:   ARTIST/Track Title.mkv
+    Nested: ARTIST/Track Title/Track Title.mkv
+
+    In the nested layout each track has its own folder holding the video plus
+    its related files (subtitles, artwork, .nfo). Only one level below the
+    artist folder is searched, so an artist folder can mix both layouts without
+    the scan descending into unrelated directory trees.
+    """
+    for entry in sorted(os.scandir(artist_dir), key=lambda e: e.name):
+        if not _is_within_root(entry.path, media_root):
+            continue
+
+        if entry.is_file(follow_symlinks=False):
+            if Path(entry.name).suffix.lower() in VIDEO_EXTENSIONS:
+                yield entry
+            continue
+
+        if not entry.is_dir(follow_symlinks=False) or entry.name.startswith("."):
+            continue
+
+        for track_entry in sorted(os.scandir(entry.path), key=lambda e: e.name):
+            if not track_entry.is_file(follow_symlinks=False):
+                continue
+            if not _is_within_root(track_entry.path, media_root):
+                continue
+            if Path(track_entry.name).suffix.lower() in VIDEO_EXTENSIONS:
+                yield track_entry
+
+
+def _iter_track_dirs(artist_dir: str, media_root: Path) -> Iterator[str]:
+    """Yield the artist folder itself plus each of its track subfolders.
+
+    Used for passes that sweep a whole artist for sidecar files, so nested
+    libraries get the same treatment as flat ones.
+    """
+    yield artist_dir
+
+    for entry in sorted(os.scandir(artist_dir), key=lambda e: e.name):
+        if not entry.is_dir(follow_symlinks=False) or entry.name.startswith("."):
+            continue
+        if not _is_within_root(entry.path, media_root):
+            continue
+        yield entry.path
 
 
 def _find_or_create_artist(session: Session, folder_name: str) -> tuple[Artist, bool]:
@@ -202,6 +250,12 @@ def _process_subtitles(
                     language = lang_code
 
         if not video:
+            continue
+
+        # video_map is keyed by filename stem across the whole artist, so in the
+        # nested layout two track folders can share a stem. Only link a subtitle
+        # to a video sitting in the same folder.
+        if os.path.dirname(video.file_path) != os.path.dirname(entry.path):
             continue
 
         # Check if subtitle already exists
@@ -407,15 +461,8 @@ def run_scan(
                 # Collect video files in this artist folder
                 video_map: dict[str, Video] = {}
                 artist_added_count = 0
-                for fentry in sorted(os.scandir(entry.path), key=lambda e: e.name):
+                for fentry in _iter_video_files(entry.path, media_root):
                     _raise_if_cancelled(should_cancel)
-                    if not fentry.is_file(follow_symlinks=False):
-                        continue
-                    if not _is_within_root(fentry.path, media_root):
-                        continue
-                    ext = Path(fentry.name).suffix.lower()
-                    if ext not in VIDEO_EXTENSIONS:
-                        continue
 
                     result.files_found += 1
                     try:
@@ -446,7 +493,10 @@ def run_scan(
                             video_map[Path(fentry.name).stem] = video
                             _process_subtitles_for_video(
                                 session,
-                                artist_dir=entry.path,
+                                # Sidecars live beside the video, which in the
+                                # nested layout is the track folder, not the
+                                # artist folder.
+                                artist_dir=os.path.dirname(fentry.path),
                                 video_filename=fentry.name,
                                 video=video,
                                 media_root=media_root,
@@ -474,8 +524,9 @@ def run_scan(
                     session.flush()
                     session.commit()
 
-                # Process subtitles for this artist folder
-                _process_subtitles(session, entry.path, video_map, media_root)
+                # Process subtitles for this artist folder and any track folders
+                for track_dir in _iter_track_dirs(entry.path, media_root):
+                    _process_subtitles(session, track_dir, video_map, media_root)
                 session.commit()
 
                 if progress_callback:

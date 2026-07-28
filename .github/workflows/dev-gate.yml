@@ -1,0 +1,57 @@
+name: Dev Gate
+
+# Push to dev -> full vulnerability suite -> merge into main.
+# The merge uses MAIN_PUSH_TOKEN (a PAT) rather than the default GITHUB_TOKEN,
+# because GitHub deliberately does not trigger workflows from pushes made with
+# GITHUB_TOKEN -- with it, main-release.yml would never run.
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security:
+    name: Security Gate
+    uses: ./.github/workflows/security-audit.yml
+
+  merge-to-main:
+    name: Merge to main
+    needs: security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.MAIN_PUSH_TOKEN }}
+          persist-credentials: true
+
+      - name: Verify push token is configured
+        env:
+          MAIN_PUSH_TOKEN: ${{ secrets.MAIN_PUSH_TOKEN }}
+        run: |
+          if [ -z "$MAIN_PUSH_TOKEN" ]; then
+            echo "::error::MAIN_PUSH_TOKEN secret is not set. Create a fine-grained PAT with"
+            echo "::error::Contents: read/write on this repository and add it as a repo secret."
+            exit 1
+          fi
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge dev into main
+        run: |
+          set -euo pipefail
+          git checkout main
+          git merge --no-edit "${GITHUB_SHA}"
+          git push origin main

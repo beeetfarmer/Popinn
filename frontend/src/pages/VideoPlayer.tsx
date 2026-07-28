@@ -9,6 +9,7 @@ import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQueue } from "@/contexts/QueueContext";
+import Hls from "hls.js";
 
 interface SubtitleTrack {
   id: string;
@@ -132,6 +133,7 @@ export default function VideoPlayer() {
     enabled: !!id,
   });
   const videoElementKey = `${id || "video"}:${subtitles.map((s) => s.id).join(",")}`;
+  const isHlsSource = /\.m3u8(\?|$)/i.test(sourceUrl || "");
 
   const { data: playStats, refetch: refetchPlayStats } = useQuery<VideoPlayStats>({
     queryKey: ["video-play-stats", id],
@@ -198,6 +200,37 @@ export default function VideoPlayer() {
     setVideoError(false);
     setVideoLoading(true);
   }, [video]);
+
+  // When transcoding is enabled the backend serves an HLS playlist, which only
+  // Safari can play from a plain src. Everywhere else hls.js has to drive the
+  // element, so the src attribute is left off for HLS and set here instead.
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !sourceUrl || !isHlsSource) return;
+
+    if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
+      videoEl.src = sourceUrl;
+      return;
+    }
+
+    if (!Hls.isSupported()) {
+      setVideoError(true);
+      setVideoLoading(false);
+      return;
+    }
+
+    const hls = new Hls({ enableWorker: true });
+    hls.loadSource(sourceUrl);
+    hls.attachMedia(videoEl);
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (data.fatal) {
+        setVideoError(true);
+        setVideoLoading(false);
+      }
+    });
+
+    return () => hls.destroy();
+  }, [sourceUrl, isHlsSource, videoElementKey]);
 
   useEffect(() => {
     if (!video || !id) return;
@@ -312,7 +345,9 @@ export default function VideoPlayer() {
                 <video
                   key={videoElementKey}
                   ref={videoRef}
-                  src={sourceUrl}
+                  // HLS sources are attached in the effect above (via hls.js or
+                  // natively on Safari); setting src here would race with it.
+                  src={isHlsSource ? undefined : sourceUrl}
                   poster={video.thumbnail_url || undefined}
                   controls
                   autoPlay

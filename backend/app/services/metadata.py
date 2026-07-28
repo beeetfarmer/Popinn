@@ -6,6 +6,18 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _ffmpeg_error(stderr: bytes | None, limit: int = 500) -> str:
+    """Return the tail of ffmpeg/ffprobe stderr, where the actual error lives.
+
+    Taking the head instead yields only the version banner, which hides real
+    causes such as the output directory not being writable.
+    """
+    if not stderr:
+        return "<no stderr>"
+    text = stderr.decode("utf-8", errors="replace").strip()
+    return text[-limit:] if len(text) > limit else text
+
+
 def extract_metadata(file_path: str) -> dict:
     """Extract duration and file_size from a video using ffprobe."""
     try:
@@ -21,7 +33,7 @@ def extract_metadata(file_path: str) -> dict:
             timeout=30,
         )
         if result.returncode != 0:
-            logger.warning("ffprobe failed for %s: %s", file_path, result.stderr[:500])
+            logger.warning("ffprobe failed for %s: %s", file_path, _ffmpeg_error(result.stderr))
             return {"duration": None, "file_size": None}
 
         data = json.loads(result.stdout.decode("utf-8", errors="replace"))
@@ -54,7 +66,12 @@ def generate_thumbnail(
             timeout=30,
         )
         if result.returncode != 0:
-            logger.warning("ffmpeg thumbnail failed for %s: %s", video_path, result.stderr[:500])
+            logger.warning(
+                "ffmpeg thumbnail failed for %s -> %s: %s",
+                video_path,
+                output_path,
+                _ffmpeg_error(result.stderr),
+            )
             return False
         return Path(output_path).exists()
     except Exception:
@@ -99,7 +116,12 @@ def generate_hls(video_path: str, output_dir: str) -> str | None:
             timeout=300,
         )
         if result.returncode != 0:
-            logger.warning("ffmpeg HLS failed for %s: %s", video_path, result.stderr[:500])
+            logger.warning(
+                "ffmpeg HLS failed for %s -> %s: %s",
+                video_path,
+                output_dir,
+                _ffmpeg_error(result.stderr),
+            )
             return None
         return str(playlist) if playlist.exists() else None
     except Exception:
@@ -129,7 +151,10 @@ def generate_preview_clip(
                 "-t",
                 str(safe_duration),
                 "-vf",
-                "scale=-2:360:force_original_aspect_ratio=decrease",
+                # A -2 width already preserves the aspect ratio, and pairing it
+                # with force_original_aspect_ratio makes libx264 reject the
+                # computed size on unusually wide sources (e.g. 3840x1770).
+                "scale=-2:360",
                 "-c:v",
                 "libx264",
                 "-profile:v",
@@ -155,9 +180,10 @@ def generate_preview_clip(
         )
         if result.returncode != 0:
             logger.warning(
-                "ffmpeg preview clip failed for %s: %s",
+                "ffmpeg preview clip failed for %s -> %s: %s",
                 video_path,
-                result.stderr[:500],
+                output_path,
+                _ffmpeg_error(result.stderr),
             )
             return False
         return Path(output_path).exists()
