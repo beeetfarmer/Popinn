@@ -86,3 +86,25 @@ class VideoRecommendationsPage(BaseModel):
     offset: int
     limit: int
     has_more: bool
+
+
+class TranscodeRunStatus(BaseModel):
+    """State of a bulk transcode run currently in flight."""
+
+    active: bool = False
+    total: int = 0
+    completed: int = 0
+    failed: int = 0
+    processed: int = 0
+    current: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class TranscodeStatus(BaseModel):
+    transcoding_enabled: bool
+    total_videos: int
+    needs_transcode: int
+    transcoded: int
+    pending: int
+    run: TranscodeRunStatus

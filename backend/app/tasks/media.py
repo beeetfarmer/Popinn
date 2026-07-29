@@ -6,10 +6,15 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import get_sync_session_factory
 from app.models.video import Video
-from app.services.metadata import generate_hls, generate_thumbnail
+from app.services.metadata import (
+    generate_hls,
+    generate_thumbnail,
+    playlist_is_complete,
+)
 from app.services.runtime_settings import (
     get_effective_app_data_path_sync,
 )
+from app.services.transcode_status import get_run, needs_transcode
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +45,44 @@ def regenerate_all_thumbnails() -> dict:
         session.commit()
 
     return {"status": "completed", "regenerated": regenerated, "failed": failed}
+
+
+def pending_transcode_videos(session) -> list[Video]:
+    """Active videos that need an HLS rendition but do not have a usable one.
+
+    "Usable" means a *complete* playlist -- a truncated one from a killed
+    transcode is treated as missing so it gets regenerated rather than served.
+    """
+    app_data_path = get_effective_app_data_path_sync(session)
+    videos = session.execute(
+        select(Video).where(Video.deleted_at.is_(None))
+    ).scalars().all()
+
+    pending = []
+    for video in videos:
+        if not needs_transcode(video.file_path):
+            continue
+        playlist = os.path.join(
+            app_data_path, settings.HLS_DIR, str(video.id), "index.m3u8"
+        )
+        if not playlist_is_complete(playlist):
+            pending.append(video)
+    return pending
+
+
+def transcode_one_and_report(video_id: str, title: str) -> dict:
+    """Run one transcode as part of a bulk run, reporting into the run state."""
+    run = get_run()
+    run.set_current(title)
+    try:
+        result = generate_hls_for_video(video_id)
+        run.record(result.get("status") == "completed")
+        return result
+    except Exception:
+        # A crashing job must still report, or the run never reaches its total
+        # and the UI shows a progress bar that never completes.
+        run.record(False)
+        raise
 
 
 def generate_hls_for_video(video_id: str) -> dict:

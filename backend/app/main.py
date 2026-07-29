@@ -8,7 +8,7 @@ import uuid
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi import Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import select
@@ -217,6 +217,35 @@ async def request_context_and_security_headers(request: Request, call_next):
 app.include_router(v1_router, prefix=settings.API_V1_PREFIX)
 
 
+def _asset_response(file_path: Path) -> Response:
+    """Serve a generated asset with cache semantics that suit its type.
+
+    Two problems this exists to avoid, both of which produce a video that plays
+    from the middle with no seek bar:
+
+    * FileResponse sets no Cache-Control, so browsers fall back to heuristic
+      freshness off Last-Modified and will happily reuse a playlist for minutes
+      without revalidating. A playlist cached while a transcode was broken then
+      survives the fix -- the file on disk is correct and the player still sees
+      a truncated one.
+    * FileResponse advertises byte ranges. A ranged request for a playlist can
+      return everything except the tail, and the tail is where #EXT-X-ENDLIST
+      lives; without it the player treats a finished recording as a live stream.
+
+    Playlists are therefore sent whole and never stored. Segments and images do
+    get reused, but only after revalidating, because a re-transcode overwrites
+    segment_000.ts and friends in place -- the names stay the same while the
+    bytes change, so anything cached by name alone would go stale.
+    """
+    if file_path.suffix.lower() == ".m3u8":
+        return Response(
+            content=file_path.read_bytes(),
+            media_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-store", "Accept-Ranges": "none"},
+        )
+    return FileResponse(file_path, headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/media/{requested_path:path}")
 async def serve_media(
     requested_path: str,
@@ -266,4 +295,4 @@ async def serve_app_data(
         raise HTTPException(status_code=404, detail="File not found")
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path)
+    return _asset_response(file_path)

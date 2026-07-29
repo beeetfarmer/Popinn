@@ -17,6 +17,8 @@ from app.models.playback import VideoPlay
 from app.models.user import User
 from app.models.video import Video
 from app.schemas.video import (
+    TranscodeRunStatus,
+    TranscodeStatus,
     VideoBulkDelete,
     VideoRecommendationRead,
     VideoRecommendationsPage,
@@ -29,6 +31,7 @@ from app.schemas.video import (
 )
 from app.services.background_jobs import submit_job
 from app.services.lastfm import fetch_similar_tracks, normalize_for_match
+from app.services.metadata import playlist_is_complete
 from app.services.path_urls import to_public_asset_url
 from app.services.playback import is_counted_view
 from app.services.runtime_settings import (
@@ -38,12 +41,13 @@ from app.services.runtime_settings import (
     get_effective_view_threshold_ratio,
 )
 from app.services.stream_tokens import sign_stream_url_for_user
+from app.services.transcode_status import get_run, needs_transcode
 from app.services.spotify import (
     SpotifyRateLimitError,
     SpotifyServiceError,
     search_tracks,
 )
-from app.tasks.media import generate_hls_for_video
+from app.tasks.media import generate_hls_for_video, transcode_one_and_report
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 
@@ -78,9 +82,22 @@ def _hls_playlist_url(
     user_id: uuid.UUID | None = None,
 ) -> str | None:
     playlist = Path(app_data_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
-    if not playlist.exists():
+    # Completeness, not mere existence: a truncated playlist from a killed
+    # transcode plays as a live stream (no seek bar, starts mid-video). Treating
+    # it as absent falls back to direct streaming and lets a retry regenerate it.
+    if not playlist_is_complete(playlist):
         return None
-    url = f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8"
+    # Version the URL by the playlist's mtime. Sending no-store only governs
+    # responses cached from now on; a client that cached a truncated playlist
+    # while transcoding was broken would keep replaying it, and because hls.js
+    # fetches the manifest over XHR a hard reload does not reliably evict it.
+    # Regenerating changes the mtime, which changes the cache key, so a stale
+    # entry can never be reused.
+    try:
+        version = int(playlist.stat().st_mtime)
+    except OSError:
+        version = 0
+    url = f"/data/{settings.HLS_DIR}/{video_id}/index.m3u8?v={version}"
     if user_id is not None:
         return sign_stream_url_for_user(url, user_id)
     return url
@@ -461,6 +478,94 @@ async def update_video(
         transcoding_enabled,
         admin.id,
     )
+
+
+@router.get("/transcode/status", response_model=TranscodeStatus)
+async def get_transcode_status(
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Library-wide transcode coverage, plus any run currently in flight."""
+    transcoding_enabled = await get_effective_transcoding_enabled(db)
+    app_data_root = await get_effective_app_data_path(db)
+
+    result = await db.execute(select(Video).where(Video.deleted_at.is_(None)))
+    videos = result.scalars().all()
+
+    needs_total = 0
+    transcoded = 0
+    for video in videos:
+        if not needs_transcode(video.file_path):
+            continue
+        needs_total += 1
+        playlist = (
+            Path(app_data_root) / settings.HLS_DIR / str(video.id) / "index.m3u8"
+        )
+        if playlist_is_complete(playlist):
+            transcoded += 1
+
+    run = get_run().snapshot()
+    return TranscodeStatus(
+        transcoding_enabled=transcoding_enabled,
+        total_videos=len(videos),
+        needs_transcode=needs_total,
+        transcoded=transcoded,
+        pending=needs_total - transcoded,
+        run=TranscodeRunStatus(**run),
+    )
+
+
+@router.post("/transcode/run", status_code=status.HTTP_202_ACCEPTED)
+async def run_bulk_transcode(
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue an HLS transcode for every video that still needs one."""
+    if not await get_effective_transcoding_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Transcoding is disabled. Enable it in settings first.",
+        )
+
+    app_data_root = await get_effective_app_data_path(db)
+    result = await db.execute(select(Video).where(Video.deleted_at.is_(None)))
+    pending = [
+        video
+        for video in result.scalars().all()
+        if needs_transcode(video.file_path)
+        and not playlist_is_complete(
+            Path(app_data_root) / settings.HLS_DIR / str(video.id) / "index.m3u8"
+        )
+    ]
+
+    if not pending:
+        return {"message": "Nothing to transcode", "queued": 0}
+
+    run = get_run()
+    if not run.start(len(pending)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A transcode run is already in progress.",
+        )
+
+    queued = 0
+    try:
+        for video in pending:
+            submit_job(
+                "bulk_hls",
+                transcode_one_and_report,
+                str(video.id),
+                video.title,
+            )
+            queued += 1
+    except Exception:
+        # Some jobs may already be running and will report in; only abandon the
+        # run outright if nothing was queued at all.
+        if queued == 0:
+            run.abandon()
+        raise
+
+    return {"message": "Transcoding queued", "queued": queued}
 
 
 @router.post("/{video_id}/hls", status_code=status.HTTP_202_ACCEPTED)

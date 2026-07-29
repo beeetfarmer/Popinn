@@ -1,9 +1,22 @@
 import json
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _discard_hls_output(out_dir: Path) -> None:
+    """Remove a failed transcode's directory so the next attempt starts clean.
+
+    Leaving partial output behind is what makes a single timeout permanent: the
+    playlist exists, so it gets served and never regenerated.
+    """
+    try:
+        shutil.rmtree(out_dir, ignore_errors=True)
+    except OSError:
+        logger.warning("Could not remove incomplete HLS output at %s", out_dir)
 
 
 def _ffmpeg_error(stderr: bytes | None, limit: int = 500) -> str:
@@ -79,10 +92,48 @@ def generate_thumbnail(
         return False
 
 
+def playlist_is_complete(playlist_path: str | Path) -> bool:
+    """Whether an HLS playlist represents a finished transcode.
+
+    A playlist without #EXT-X-ENDLIST is a *live* stream as far as the HLS spec
+    is concerned, so players show no seek bar and start at the live edge rather
+    than at zero. ffmpeg only writes that tag when it exits cleanly, which means
+    a killed or timed-out transcode leaves a file that looks usable but plays
+    like a broadcast. Existence is therefore not enough -- callers must check
+    this before serving or reusing a playlist.
+    """
+    try:
+        path = Path(playlist_path)
+        if not path.is_file():
+            return False
+        # The tag is written last, so only the tail needs reading.
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            handle.seek(max(0, handle.tell() - 512))
+            return b"#EXT-X-ENDLIST" in handle.read()
+    except OSError:
+        return False
+
+
+def _hls_timeout_seconds(video_path: str) -> int:
+    """Wall-clock budget for one transcode, scaled to the source duration.
+
+    A flat ceiling silently truncates longer videos: several concurrent 4K
+    encodes contending for the same cores run well behind real time, so a fixed
+    300s cut every source over roughly three minutes in half. Allow 8x realtime
+    plus a fixed floor, which covers heavy contention while still bounding a
+    genuinely stuck ffmpeg.
+    """
+    duration = extract_metadata(video_path).get("duration")
+    if not duration or duration <= 0:
+        return 1800
+    return int(min(7200, max(600, duration * 8)))
+
+
 def generate_hls(video_path: str, output_dir: str) -> str | None:
     """Generate a simple HLS stream (single variant) and return the playlist path."""
+    out_dir = Path(output_dir)
     try:
-        out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         playlist = out_dir / "index.m3u8"
         segment_pattern = out_dir / "segment_%03d.ts"
@@ -123,6 +174,10 @@ def generate_hls(video_path: str, output_dir: str) -> str | None:
                 "6",
                 "-hls_list_size",
                 "0",
+                # Marks the result as a finished recording rather than a live
+                # stream, so players expose a seek bar and start at zero.
+                "-hls_playlist_type",
+                "vod",
                 "-hls_segment_filename",
                 str(segment_pattern),
                 "-f",
@@ -131,7 +186,7 @@ def generate_hls(video_path: str, output_dir: str) -> str | None:
                 str(playlist),
             ],
             capture_output=True,
-            timeout=300,
+            timeout=_hls_timeout_seconds(video_path),
         )
         if result.returncode != 0:
             logger.warning(
@@ -140,10 +195,31 @@ def generate_hls(video_path: str, output_dir: str) -> str | None:
                 output_dir,
                 _ffmpeg_error(result.stderr),
             )
+            _discard_hls_output(out_dir)
             return None
-        return str(playlist) if playlist.exists() else None
+        if not playlist_is_complete(playlist):
+            # ffmpeg exited 0 without a trailer. Keeping this would serve a
+            # seekless, mid-start stream forever, and because the file exists
+            # nothing would ever retry it.
+            logger.warning(
+                "ffmpeg HLS produced an incomplete playlist for %s -> %s",
+                video_path,
+                output_dir,
+            )
+            _discard_hls_output(out_dir)
+            return None
+        return str(playlist)
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "ffmpeg HLS timed out for %s -> %s; discarding partial output",
+            video_path,
+            output_dir,
+        )
+        _discard_hls_output(out_dir)
+        return None
     except Exception:
         logger.exception("Error generating HLS for %s", video_path)
+        _discard_hls_output(out_dir)
         return None
 
 

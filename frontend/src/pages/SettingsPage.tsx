@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
+import { transcodeProgressPercent } from "@/lib/transcode";
 import PageTransition from "@/components/PageTransition";
 import { toast } from "sonner";
 import { Trash2, Shield, Calendar, Loader2, CheckCircle2, XCircle, FolderSearch } from "lucide-react";
@@ -51,6 +52,26 @@ interface RuntimeSettings {
   transcoding_enabled: boolean;
   view_threshold_percent: number;
   lastfm_override_local_artist_images: boolean;
+}
+
+interface TranscodeRunStatus {
+  active: boolean;
+  total: number;
+  completed: number;
+  failed: number;
+  processed: number;
+  current: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+interface TranscodeStatus {
+  transcoding_enabled: boolean;
+  total_videos: number;
+  needs_transcode: number;
+  transcoded: number;
+  pending: number;
+  run: TranscodeRunStatus;
 }
 
 interface ExportSettingItem {
@@ -212,6 +233,50 @@ export default function SettingsPage() {
     },
     onError: (error: unknown) =>
       toast.error(getErrorMessage(error, "Failed to trigger thumbnail regeneration")),
+  });
+
+  // Poll only while a run is in flight; otherwise this is a cheap idle query.
+  const { data: transcodeStatus } = useQuery<TranscodeStatus>({
+    queryKey: ["transcode-status"],
+    queryFn: () => api.get("/videos/transcode/status"),
+    enabled: isAdmin,
+    refetchInterval: (query) =>
+      query.state.data?.run.active ? 2000 : false,
+  });
+
+  const transcodeRun = transcodeStatus?.run;
+  const transcodeRunActive = !!transcodeRun?.active;
+  const transcodePending = transcodeStatus?.pending ?? 0;
+
+  // Once a run finishes, the library's playback URLs change, so drop the
+  // cached video queries rather than leaving stale direct-stream URLs around.
+  const prevTranscodeActiveRef = useRef(false);
+  useEffect(() => {
+    if (prevTranscodeActiveRef.current && !transcodeRunActive && transcodeRun) {
+      queryClient.invalidateQueries({ queryKey: ["videos"] });
+      const { completed, failed } = transcodeRun;
+      if (failed > 0) {
+        toast.warning(`Transcoding finished: ${completed} done, ${failed} failed`);
+      } else if (completed > 0) {
+        toast.success(`Transcoding complete: ${completed} video${completed === 1 ? "" : "s"}`);
+      }
+    }
+    prevTranscodeActiveRef.current = transcodeRunActive;
+  }, [transcodeRunActive, transcodeRun, queryClient]);
+
+  const startTranscode = useMutation({
+    mutationFn: () =>
+      api.post<{ message: string; queued: number }>("/videos/transcode/run"),
+    onSuccess: (resp) => {
+      if (resp.queued === 0) {
+        toast.info("Every video already has a transcode");
+      } else {
+        toast.success(`Queued ${resp.queued} video${resp.queued === 1 ? "" : "s"} for transcoding`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["transcode-status"] });
+    },
+    onError: (error: unknown) =>
+      toast.error(getErrorMessage(error, "Failed to start transcoding")),
   });
 
   const exportMutation = useMutation({
@@ -774,6 +839,126 @@ export default function SettingsPage() {
                     {regenerateThumbs.isPending ? "Starting..." : "Regenerate Thumbnails"}
                   </Button>
                 </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {isAdmin && (
+          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold text-foreground">Transcoding</h2>
+              <p className="text-sm text-muted-foreground">
+                Formats browsers cannot play directly (MKV, AVI, MOV) need an HLS
+                rendition before they will play. Transcoding runs in the background.
+              </p>
+            </div>
+
+            {!transcodeStatus ? (
+              <p className="text-sm text-muted-foreground">Loading transcode status...</p>
+            ) : (
+              <>
+                {!transcodeStatus.transcoding_enabled && (
+                  <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
+                    <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+                    <div className="space-y-1 text-sm">
+                      <p className="font-medium text-foreground">Transcoding is disabled</p>
+                      <p className="text-muted-foreground">
+                        Enable it in Runtime Settings above, or these videos will not play.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-2xl font-semibold text-foreground">
+                      {transcodeStatus.needs_transcode}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Need transcoding</p>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-2xl font-semibold text-foreground">
+                      {transcodeStatus.transcoded}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Transcoded</p>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p
+                      className={`text-2xl font-semibold ${
+                        transcodePending > 0 ? "text-amber-500" : "text-foreground"
+                      }`}
+                    >
+                      {transcodePending}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Pending</p>
+                  </div>
+                </div>
+
+                {transcodeRunActive && transcodeRun && (
+                  <div className="space-y-2">
+                    <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                      {transcodeRun.total > 0 ? (
+                        <div
+                          className="h-full rounded-full bg-primary transition-all duration-500"
+                          style={{
+                            width: `${transcodeProgressPercent(
+                              transcodeRun.processed,
+                              transcodeRun.total
+                            )}%`,
+                          }}
+                        />
+                      ) : (
+                        <div
+                          className="h-full animate-pulse rounded-full bg-primary"
+                          style={{ width: "100%" }}
+                        />
+                      )}
+                    </div>
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <p>
+                        Progress: {transcodeRun.processed}/{transcodeRun.total} videos
+                        {transcodeRun.failed > 0 && ` (${transcodeRun.failed} failed)`}
+                      </p>
+                      {transcodeRun.current && (
+                        <p className="truncate">Transcoding: {transcodeRun.current}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {!transcodeRunActive && transcodePending === 0 && transcodeStatus.needs_transcode > 0 && (
+                  <div className="flex items-start gap-3 rounded-lg border border-border p-4">
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+                    <p className="text-sm text-muted-foreground">
+                      Every video that needs transcoding has been transcoded.
+                    </p>
+                  </div>
+                )}
+
+                <Button
+                  variant="secondary"
+                  onClick={() => startTranscode.mutate()}
+                  disabled={
+                    startTranscode.isPending ||
+                    transcodeRunActive ||
+                    transcodePending === 0 ||
+                    !transcodeStatus.transcoding_enabled
+                  }
+                >
+                  {transcodeRunActive ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Transcoding...
+                    </>
+                  ) : startTranscode.isPending ? (
+                    "Starting..."
+                  ) : transcodePending > 0 ? (
+                    `Transcode ${transcodePending} Video${transcodePending === 1 ? "" : "s"}`
+                  ) : (
+                    "Nothing to Transcode"
+                  )}
+                </Button>
               </>
             )}
           </section>
