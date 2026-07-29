@@ -1,0 +1,77 @@
+version: 2
+
+# Dependabot opens its pull requests against dev, not main.
+#
+# main is only reached by promoting dev through a reviewed pull request, and a
+# PR straight into main would sidestep that entirely -- it would be merged
+# without ever having run the dev gate, and would leave main ahead of dev so the
+# next promotion merges onto a diverged base.
+#
+# Trade-off worth knowing: setting target-branch turns off Dependabot's
+# automatic *security* update PRs for that ecosystem. Security *alerts* still
+# appear under Security -> Dependabot, so nothing is hidden; you just apply the
+# fix yourself instead of being handed a branch. Given the security PRs raised
+# here have consistently offered upgrades that did not clear the advisory they
+# cited, that is an acceptable exchange.
+updates:
+  - package-ecosystem: npm
+    directory: /frontend
+    target-branch: dev
+    schedule:
+      interval: weekly
+    # Wait a week before proposing a newly published version. A compromised
+    # release is usually caught and yanked within days, and without this
+    # Dependabot would offer it the moment it appears.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per ecosystem rather than one per package: the lockfile is
+      # shared, so separate PRs conflict with each other on sight.
+      npm-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: pip
+    directory: /backend
+    target-branch: dev
+    schedule:
+      interval: weekly
+    # Wait a week before proposing a newly published version. A compromised
+    # release is usually caught and yanked within days, and without this
+    # Dependabot would offer it the moment it appears.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      pip-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    # Wait a week before proposing a newly published version. A compromised
+    # release is usually caught and yanked within days, and without this
+    # Dependabot would offer it the moment it appears.
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directories:
+      - /backend
+      - /frontend
+    target-branch: dev
+    schedule:
+      interval: weekly
+    # Wait a week before proposing a newly published version. A compromised
+    # release is usually caught and yanked within days, and without this
+    # Dependabot would offer it the moment it appears.
+    cooldown:
+      default-days: 7
