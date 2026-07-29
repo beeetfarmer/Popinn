@@ -1,9 +1,17 @@
 name: Dev Gate
 
-# Push to dev -> full vulnerability suite -> merge into main.
-# The merge uses MAIN_PUSH_TOKEN (a PAT) rather than the default GITHUB_TOKEN,
-# because GitHub deliberately does not trigger workflows from pushes made with
-# GITHUB_TOKEN -- with it, main-release.yml would never run.
+# Push to dev -> full vulnerability suite. That is all.
+#
+# Promotion to main is deliberately manual: open a pull request from dev to
+# main, let the gate run on it, and merge. Merging is an ordinary push to main,
+# which triggers main-release.yml to re-run the gate against the merged tree and
+# publish.
+#
+# This used to auto-merge into main, which meant main advanced on every commit
+# and could hold a half-finished change. It also required MAIN_PUSH_TOKEN -- a
+# PAT with contents write -- because GitHub does not trigger workflows from
+# pushes made with the default GITHUB_TOKEN. Merging a PR yourself needs no such
+# token, so that secret can be deleted.
 on:
   push:
     branches:
@@ -35,10 +43,6 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          # Deliberately a job-level filter rather than `on.push.paths-ignore`.
-          # A trigger-level filter would skip the whole workflow, and the merge
-          # into main lives in this workflow -- so a docs-only push would never
-          # reach main at all. This way the scans skip and the merge still runs.
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             echo "Manual run: scanning."
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -63,7 +67,7 @@ jobs:
             echo "Code changed: scanning."
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Documentation only: skipping scans, still merging."
+            echo "Documentation only: skipping scans."
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -72,45 +76,3 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/security-audit.yml
-
-  merge-to-main:
-    name: Merge to main
-    needs: [changes, security]
-    # `security` is skipped for docs-only pushes, and a skipped dependency would
-    # normally skip this job too. Accept success-or-skipped, but never a failure
-    # and never a broken `changes` job -- otherwise a failed scan would still
-    # merge, which is the one thing this gate exists to prevent.
-    if: >-
-      !cancelled()
-      && needs.changes.result == 'success'
-      && (needs.security.result == 'success' || needs.security.result == 'skipped')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout full history
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.MAIN_PUSH_TOKEN }}
-          persist-credentials: true
-
-      - name: Verify push token is configured
-        env:
-          MAIN_PUSH_TOKEN: ${{ secrets.MAIN_PUSH_TOKEN }}
-        run: |
-          if [ -z "$MAIN_PUSH_TOKEN" ]; then
-            echo "::error::MAIN_PUSH_TOKEN secret is not set. Create a fine-grained PAT with"
-            echo "::error::Contents: read/write on this repository and add it as a repo secret."
-            exit 1
-          fi
-
-      - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Merge dev into main
-        run: |
-          set -euo pipefail
-          git checkout main
-          git merge --no-edit "${GITHUB_SHA}"
-          git push origin main

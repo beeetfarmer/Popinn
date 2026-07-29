@@ -161,10 +161,8 @@ never drift apart. It runs Gitleaks, Semgrep, Checkov, `pip-audit`, `npm audit`,
 frontend typecheck and tests, Trivy against both built images, and SBOM
 generation.
 
-**`dev-gate.yml`** runs on every push to `dev`: the gate, then a merge into
-`main`. The merge uses `MAIN_PUSH_TOKEN` (a PAT) rather than the default
-`GITHUB_TOKEN`, because GitHub deliberately does not trigger workflows from
-pushes made with `GITHUB_TOKEN` — with it, the release workflow would never fire.
+**`dev-gate.yml`** runs the gate on every push to `dev`, and nothing else.
+Promotion to `main` is manual and deliberate.
 
 **`main-release.yml`** runs on pushes to `main` and on `v*` tags: the gate again
 against the merged tree, then publish to Docker Hub.
@@ -185,7 +183,6 @@ release.
 
 | Secret | Purpose |
 | --- | --- |
-| `MAIN_PUSH_TOKEN` | Fine-grained PAT with Contents: read/write, used for the dev → main merge |
 | `DOCKERHUB_USERNAME` | Docker Hub account |
 | `DOCKERHUB_TOKEN` | Docker Hub access token |
 
@@ -196,9 +193,29 @@ rather than a confusing downstream error.
 
 ## Releasing
 
-The git tag is the source of truth. Nothing reads a version from a file.
+Work lands on `dev`, where every push runs the gate. Nothing reaches `main` or
+Docker Hub until you promote it.
+
+**1. Promote dev to main.** Open a pull request and merge it once the gate is
+green:
 
 ```bash
+gh pr create --base main --head dev --title "Release: dev -> main" --fill
+```
+
+Merging is an ordinary push to `main`, so `main-release.yml` re-runs the gate
+against the merged tree and publishes `edge` and `<sha>`.
+
+`main` used to advance automatically on every `dev` push. That meant it could
+hold a half-finished change, and it needed a PAT (`MAIN_PUSH_TOKEN`) because
+GitHub does not trigger workflows from pushes made with `GITHUB_TOKEN`. Merging
+a PR yourself needs no token, so that secret is gone.
+
+**2. Tag the release.** The git tag is the source of truth; nothing reads a
+version from a file.
+
+```bash
+git checkout main && git pull
 git tag v0.1.0
 git push origin v0.1.0
 ```
