@@ -3,10 +3,18 @@ name: Main Release
 # Push to main (including the auto-merge from dev-gate.yml) -> full
 # vulnerability suite re-run against the merged tree -> publish images.
 # Nothing reaches Docker Hub unless every scan job passes.
+#
+# Two kinds of push land here:
+#   main         -> :latest and :<sha>, the rolling build
+#   tag v0.1.0   -> :0.1.0, :0.1 and :latest, a versioned release
+# The git tag is the source of truth for the version; nothing is read from a
+# file, so a release is exactly `git tag v0.1.0 && git push origin v0.1.0`.
 on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -39,6 +47,42 @@ jobs:
             exit 1
           fi
 
+      - name: Compute image tags
+        id: meta
+        env:
+          REGISTRY_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          # Every build is addressable by commit; the rest depends on the ref.
+          names="$GITHUB_SHA"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            if printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              # Full release. The MAJOR.MINOR alias tracks the newest patch, so
+              # 0.1 follows 0.1.0 -> 0.1.1 without anyone editing a compose file.
+              names="$names $version ${version%.*} latest"
+            elif printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$'; then
+              # Pre-release: publishable, but it must never capture :latest or
+              # the alias, or `docker pull popinn-web` starts serving an rc.
+              names="$names $version"
+            else
+              echo "::error::Tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH[-prerelease]"
+              exit 1
+            fi
+          else
+            names="$names latest"
+          fi
+          echo "Publishing tags: $names"
+          for image in backend web; do
+            {
+              echo "${image}<<TAGS_EOF"
+              for n in $names; do
+                echo "${REGISTRY_USER}/popinn-${image}:${n}"
+              done
+              echo "TAGS_EOF"
+            } >> "$GITHUB_OUTPUT"
+          done
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -54,9 +98,7 @@ jobs:
           context: .
           file: backend/Dockerfile
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/popinn-backend:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/popinn-backend:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.backend }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -67,8 +109,6 @@ jobs:
           file: frontend/Dockerfile
           target: prod
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/popinn-web:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/popinn-web:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.web }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
