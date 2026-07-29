@@ -170,7 +170,7 @@ artist biographies or artwork.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `TAG` | `latest` | Image tag to run. Pin to `0.1.0` for an exact release, or `0.1` to track patches. |
+| `TAG` | `latest` | Image tag to run. `latest` is the newest release; `0.1` tracks patches within a minor line; `0.1.0` pins exactly. `edge` is every commit merged to `main` and is not a release. |
 | `POPINN_BACKEND_MEMORY` | `4g` | Backend memory ceiling |
 | `POPINN_BACKEND_CPUS` | `4` | Backend CPU allowance |
 | `POPINN_USERNS` | `keep-id:uid=10001,gid=10001` | User-namespace mapping. **Must be empty for Docker.** See [File permissions](installation.md#file-permissions). |

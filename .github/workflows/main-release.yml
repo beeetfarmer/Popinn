@@ -5,8 +5,14 @@ name: Main Release
 # Nothing reaches Docker Hub unless every scan job passes.
 #
 # Two kinds of push land here:
-#   main         -> :latest and :<sha>, the rolling build
+#   main         -> :edge and :<sha>, the rolling build
 #   tag v0.1.0   -> :0.1.0, :0.1 and :latest, a versioned release
+#
+# The rolling channel is :edge, not :latest, because dev-gate.yml auto-merges
+# dev into main -- so a push to main is every commit, not every release. Naming
+# that :latest would quietly break the one thing everyone assumes about it, and
+# the failure is silent: you pull mid-refactor and cannot tell why.
+#
 # The git tag is the source of truth for the version; nothing is read from a
 # file, so a release is exactly `git tag v0.1.0 && git push origin v0.1.0`.
 on:
@@ -123,7 +129,8 @@ jobs:
               exit 1
             fi
           else
-            names="$names latest"
+            # Rolling channel. Deliberately not :latest -- see the header.
+            names="$names edge"
           fi
           echo "Publishing tags: $names"
           for image in backend web; do

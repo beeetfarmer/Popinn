@@ -210,6 +210,7 @@ That publishes:
 | `0.1.0` | This exact release |
 | `0.1` | The newest `0.1.x`, so a pinned deployment picks up patches |
 | `latest` | The newest release |
+| `edge` | Moved only by pushes to `main`, i.e. every commit — not a release |
 | `<sha>` | Every build, addressable by commit |
 
 Pre-release tags such as `v0.1.0-rc1` publish under their own name but never
@@ -217,5 +218,11 @@ take `latest` or the `MAJOR.MINOR` alias, so `docker pull popinn-web` cannot
 start serving a release candidate. A malformed tag fails the job rather than
 publishing nothing quietly.
 
-Normal pushes to `main` publish only `latest` and `<sha>`, so version tags stay
+Normal pushes to `main` publish only `edge` and `<sha>`, so version tags stay
 pinned to what they were released as.
+
+The rolling channel is `edge` rather than `latest` on purpose. `dev-gate.yml`
+auto-merges `dev` into `main`, so a push to `main` is every commit, not every
+release — calling that `latest` would break the one assumption everyone makes
+about that tag, and break it silently: you would pull a half-finished refactor
+with no way to tell. Self-hosters can therefore use `latest` and get releases.

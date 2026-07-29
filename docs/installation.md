@@ -225,12 +225,13 @@ docker compose --env-file .env -f docker-compose.yml up -d
 ```
 
 Migrations run automatically on startup. To pin a specific release rather than
-tracking `latest`, set `TAG` in `.env`:
+tracking releases, set `TAG` in `.env`:
 
 ```ini
 TAG=0.1.0     # exact release
 TAG=0.1       # newest 0.1.x patch
-TAG=latest    # newest build
+TAG=latest    # newest release (recommended)
+TAG=edge      # every commit merged to main; unstable
 ```
 
 Back up the database before upgrading across a minor version.
