@@ -18,13 +18,72 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect change scope
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: filter
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # Deliberately a job-level filter rather than `on.push.paths-ignore`.
+          # A trigger-level filter would skip the whole workflow, and the merge
+          # into main lives in this workflow -- so a docs-only push would never
+          # reach main at all. This way the scans skip and the merge still runs.
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Manual run: scanning."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # No usable base (first push of a branch, or a force-push that
+          # orphaned it) means we cannot diff, so assume code and scan.
+          if [ -z "${BEFORE:-}" ] \
+             || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "No usable base commit: scanning."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BEFORE" "$GITHUB_SHA")"
+          echo "Changed files:"
+          printf '%s\n' "$changed"
+          # Docs-only iff EVERY changed path is documentation. A commit that
+          # touches a README and a Dockerfile still scans, which is the point:
+          # the filter can only ever skip changes that cannot affect an image.
+          if printf '%s\n' "$changed" | grep -qvE '(\.md$|^docs/|^LICENSE$)'; then
+            echo "Code changed: scanning."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Documentation only: skipping scans, still merging."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   security:
     name: Security Gate
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/security-audit.yml
 
   merge-to-main:
     name: Merge to main
-    needs: security
+    needs: [changes, security]
+    # `security` is skipped for docs-only pushes, and a skipped dependency would
+    # normally skip this job too. Accept success-or-skipped, but never a failure
+    # and never a broken `changes` job -- otherwise a failed scan would still
+    # merge, which is the one thing this gate exists to prevent.
+    if: >-
+      !cancelled()
+      && needs.changes.result == 'success'
+      && (needs.security.result == 'success' || needs.security.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout full history

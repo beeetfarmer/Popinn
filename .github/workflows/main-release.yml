@@ -25,13 +25,66 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    name: Detect change scope
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: filter
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # A job-level filter, not `on.push.paths-ignore`, because a trigger
+          # filter would also be applied to tag pushes -- where "changed files"
+          # is not meaningful -- and could silently skip a release.
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "Tag push: always a release, never filtered."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Manual run: publishing."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "${BEFORE:-}" ] \
+             || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "No usable base commit: publishing."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BEFORE" "$GITHUB_SHA")"
+          echo "Changed files:"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -qvE '(\.md$|^docs/|^LICENSE$)'; then
+            echo "Code changed: rebuilding and publishing."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            # Nothing that lands in an image changed, so :latest already points
+            # at this tree's build. Rebuilding would only churn the digest.
+            echo "Documentation only: skipping rebuild and publish."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   security:
     name: Security Gate
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/security-audit.yml
 
   publish:
     name: Publish to Docker Hub
-    needs: security
+    needs: [changes, security]
+    if: needs.changes.outputs.code == 'true' && needs.security.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
