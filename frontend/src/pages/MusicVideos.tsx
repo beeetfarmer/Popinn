@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { MusicVideo, Artist } from "@/data/mockData";
@@ -45,7 +45,35 @@ export default function MusicVideosPage() {
   const { startQueue } = useQueue();
   const isAdmin = user?.role === "admin";
   const queryClient = useQueryClient();
-  const [page, setPage] = useState(1);
+  // Page lives in the URL, not component state. This component unmounts when
+  // you open a video, so local state would be lost and you would always come
+  // back to page 1 -- the URL is the only thing browser history restores.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.max(1, Number(searchParams.get("page")) || 1);
+  // Deliberately does NOT close over `page`. An identity that changes whenever
+  // the page changes would re-fire any effect listing setPage as a dependency
+  // -- including the filter reset below, which would then snap straight back to
+  // page 1 and make the Next button look dead. The current page is read out of
+  // the params inside the updater instead.
+  const setPage = useCallback(
+    (next: number | ((current: number) => number)) => {
+      setSearchParams(
+        (params) => {
+          const updated = new URLSearchParams(params);
+          const current = Math.max(1, Number(updated.get("page")) || 1);
+          const value = typeof next === "function" ? next(current) : next;
+          if (value <= 1) updated.delete("page");
+          else updated.set("page", String(value));
+          return updated;
+        },
+        // Paging is not a destination: replacing keeps the Back button going
+        // to wherever the user actually came from rather than walking back
+        // through every page they clicked.
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
   const [sortBy, setSortBy] = useState("added_at");
   const [sortOrder, setSortOrder] = useState("desc");
   const [filterArtist, setFilterArtist] = useState("all");
@@ -114,9 +142,23 @@ export default function MusicVideosPage() {
     [filtered, page]
   );
 
-  // Reset page when filters/sort change.
+  // Reset page when filters/sort change -- but not on mount, which would
+  // immediately discard a page restored from the URL when coming back from a
+  // video.
+  const filtersInitialised = useRef(false);
+  // setPage is deliberately reached through a ref rather than listed as a
+  // dependency. React Router rebuilds setSearchParams whenever the params
+  // change, so setPage cannot be referentially stable -- listing it here means
+  // every page change re-runs this effect and resets straight back to page 1,
+  // which makes the pager look broken.
+  const setPageRef = useRef(setPage);
+  setPageRef.current = setPage;
   useEffect(() => {
-    setPage(1);
+    if (!filtersInitialised.current) {
+      filtersInitialised.current = true;
+      return;
+    }
+    setPageRef.current(1);
   }, [filterArtist, filterGenre, sortBy, sortOrder]);
 
   const bulkDelete = useMutation({

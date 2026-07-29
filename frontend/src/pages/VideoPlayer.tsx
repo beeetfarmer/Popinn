@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { MusicVideo } from "@/data/mockData";
@@ -92,6 +92,17 @@ function formatPlaybackTotal(totalSeconds: number): string {
 export default function VideoPlayer() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Back used to be a hardcoded link to /videos, which threw away wherever the
+  // user actually came from -- an artist page, a search, a watchlist. Going
+  // back through history returns them there, and restores that page's URL
+  // state (list pagination) with it. location.key is "default" only when this
+  // is the first entry in the stack (opened directly, or a fresh tab), where
+  // there is nothing to go back to.
+  const handleBack = useCallback(() => {
+    if (location.key !== "default") navigate(-1);
+    else navigate("/videos");
+  }, [location.key, navigate]);
   const {
     queue,
     currentIndex,
@@ -323,9 +334,13 @@ export default function VideoPlayer() {
     <PageTransition>
       <div className="mx-auto max-w-6xl lg:flex lg:items-start lg:gap-6">
         <div className="min-w-0 flex-1">
-          <Link to="/videos" className="mb-4 inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80">
+          <button
+            type="button"
+            onClick={handleBack}
+            className="mb-4 inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80"
+          >
             <ArrowLeft className="h-4 w-4" /> Back
-          </Link>
+          </button>
 
           {/* Player */}
           <div className="relative aspect-video overflow-hidden rounded-xl border border-border bg-card">

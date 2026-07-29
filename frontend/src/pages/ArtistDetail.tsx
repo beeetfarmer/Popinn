@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { ArtistDetail as ArtistDetailType } from "@/data/mockData";
@@ -124,7 +124,27 @@ export default function ArtistDetail() {
   const [artistRecBaseLimit, setArtistRecBaseLimit] = useState(
     getResponsiveRecommendationLimit
   );
-  const [page, setPage] = useState(1);
+  // Same reasoning as the videos list: opening a video unmounts this page, so
+  // the page number has to live in the URL to survive coming back. setPage must
+  // not close over `page`, or effects depending on it re-fire on every change.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.max(1, Number(searchParams.get("page")) || 1);
+  const setPage = useCallback(
+    (next: number | ((current: number) => number)) => {
+      setSearchParams(
+        (params) => {
+          const updated = new URLSearchParams(params);
+          const current = Math.max(1, Number(updated.get("page")) || 1);
+          const value = typeof next === "function" ? next(current) : next;
+          if (value <= 1) updated.delete("page");
+          else updated.set("page", String(value));
+          return updated;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
 
   const { data: artist, isLoading, isError } = useQuery<ArtistDetailType>({
     queryKey: ["artist", id],
