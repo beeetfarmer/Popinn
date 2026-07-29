@@ -1,12 +1,25 @@
-TAG ?= latest
-WEB_PORT ?= 8080
 DEV_ENV_FILE ?= .env
 PROD_ENV_FILE ?= .env
-TRIVY_CONTAINER_IMAGE ?= docker.io/aquasec/trivy:0.57.1
+TRIVY_CONTAINER_IMAGE ?= docker.io/aquasec/trivy:0.72.0
 CHECKOV_BIN ?= backend/.venv/bin/checkov
 
+# TAG and WEB_PORT come from the env file, which compose reads via --env-file.
+# They are only pushed into the environment when overridden on the command line
+# (make TAG=x ...), because an exported shell variable silently beats the env
+# file during compose interpolation -- which previously made WEB_PORT=8046 in
+# .env come up on 8080 instead.
+TAG ?= $(shell sed -n 's/^TAG=//p' $(PROD_ENV_FILE) 2>/dev/null | tail -1)
+TAG := $(or $(strip $(TAG)),latest)
+WEB_PORT ?= $(shell sed -n 's/^WEB_PORT=//p' $(PROD_ENV_FILE) 2>/dev/null | tail -1)
+WEB_PORT := $(or $(strip $(WEB_PORT)),8080)
+
+ifeq ($(origin TAG), command line)
 export TAG
+endif
+ifeq ($(origin WEB_PORT), command line)
 export WEB_PORT
+endif
+
 export TRIVY_CONTAINER_IMAGE
 
 .PHONY: docker-dev-up docker-dev-down docker-dev-logs docker-prod-up docker-prod-down docker-prod-build docker-prod-push docker-prod-release podman-dev-up podman-dev-down podman-dev-logs podman-prod-build podman-prod-up podman-prod-down podman-prod-push security-audit security-audit-backend security-audit-frontend security-audit-images security-audit-iac-local security-audit-trivy-config-local security-audit-local
@@ -64,8 +77,8 @@ security-audit-frontend:
 	docker run --rm -v "$$(pwd)":/src -w /src/frontend node:20-alpine sh -lc "npm ci --ignore-scripts && npm audit --omit=dev --audit-level=high"
 
 security-audit-images:
-	trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 beeetfarmer/popinn-backend:${TAG}
-	trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 beeetfarmer/popinn-web:${TAG}
+	trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 beeetfarmer/popinn-backend:$(TAG)
+	trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 beeetfarmer/popinn-web:$(TAG)
 
 security-audit-iac-local:
 	$(CHECKOV_BIN) -f docker-compose.dev.yml -f docker-compose.prod.yml --quiet
