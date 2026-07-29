@@ -19,6 +19,11 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    # Wait a week before proposing a newly published version. A compromised
+    # release is usually caught and yanked within days, and without this
+    # Dependabot would offer it the moment it appears.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       # One PR per ecosystem rather than one per package: the lockfile is
@@ -32,6 +37,11 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    # Wait a week before proposing a newly published version. A compromised
+    # release is usually caught and yanked within days, and without this
+    # Dependabot would offer it the moment it appears.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       pip-dependencies:
@@ -43,6 +53,11 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    # Wait a week before proposing a newly published version. A compromised
+    # release is usually caught and yanked within days, and without this
+    # Dependabot would offer it the moment it appears.
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns:
@@ -55,3 +70,8 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    # Wait a week before proposing a newly published version. A compromised
+    # release is usually caught and yanked within days, and without this
+    # Dependabot would offer it the moment it appears.
+    cooldown:
+      default-days: 7
