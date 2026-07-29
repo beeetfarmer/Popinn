@@ -74,7 +74,7 @@ security-audit-backend:
 	docker run --rm -v "$$(pwd)":/src -w /src python:3.12-slim sh -lc "pip install --no-cache-dir pip-audit >/dev/null && pip-audit -r backend/requirements.txt --strict"
 
 security-audit-frontend:
-	docker run --rm -v "$$(pwd)":/src -w /src/frontend node:20-alpine sh -lc "npm ci --ignore-scripts && npm audit --omit=dev --audit-level=high"
+	docker run --rm -v "$$(pwd)":/src -w /src/frontend node:22-alpine sh -lc "npm ci --ignore-scripts && npm audit --omit=dev --audit-level=high"
 
 security-audit-images:
 	trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 beeetfarmer/popinn-backend:$(TAG)

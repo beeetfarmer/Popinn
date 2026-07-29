@@ -91,6 +91,24 @@ def generate_hls(video_path: str, output_dir: str) -> str | None:
                 "ffmpeg",
                 "-i",
                 video_path,
+                # Cap the ladder at 1080p. Without this the source resolution is
+                # kept, so a 4K master is re-encoded at 4K -- which is what made
+                # a single transcode hold ~2.7GB resident. Two stages because
+                # pairing force_original_aspect_ratio with a -2 dimension makes
+                # libx264 reject the computed size on unusually wide sources
+                # (e.g. 3840x1770); the trunc pass just keeps both sides even.
+                "-vf",
+                (
+                    "scale=1920:1080:force_original_aspect_ratio=decrease,"
+                    "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+                ),
+                # libx264 defaults to ~1.5x the host's core count, and each
+                # thread carries its own lookahead frame buffers. Unbounded that
+                # dwarfs the encode itself once several jobs run in parallel.
+                "-threads",
+                "4",
+                "-pix_fmt",
+                "yuv420p",
                 "-c:v",
                 "libx264",
                 "-preset",

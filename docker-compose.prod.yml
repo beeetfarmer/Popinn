@@ -69,8 +69,12 @@ services:
     cap_drop:
       - ALL
     pids_limit: 256
-    mem_limit: 1g
-    cpus: "1.5"
+    # Both of these scale with BACKGROUND_WORKERS, because each worker can hold
+    # an ffmpeg transcode. Measured with 4 workers transcoding concurrently:
+    # ~2.1GB resident, and 1.5 CPUs pegged at 100% (one HLS job finished in the
+    # time four should have). Budget roughly 0.5g and 1 CPU per worker.
+    mem_limit: ${POPINN_BACKEND_MEMORY:-4g}
+    cpus: "${POPINN_BACKEND_CPUS:-4}"
     volumes:
       - ${POPINN_MEDIA_PATH:-./media}:/media:ro
       - ${POPINN_APPDATA_PATH:-./app-data-dev}:/app-data
