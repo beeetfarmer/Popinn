@@ -90,3 +90,6 @@ frontend/bun.lockb
 
 # Markdown notes are kept local (covers creds.md and any scratch docs)
 *.md
+# ...except the published documentation, which has to ship with the repo.
+!README.md
+!docs/**
