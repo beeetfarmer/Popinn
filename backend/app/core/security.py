@@ -9,13 +9,25 @@ from app.core.config import settings
 
 ALGORITHM = "HS256"
 
+# bcrypt has always ignored everything past the first 72 bytes. Up to and
+# including bcrypt 4 it truncated silently; bcrypt 5 raises ValueError instead.
+# Truncating here keeps the old behaviour on both, which matters twice over: a
+# long password must not turn into a 500, and anyone who registered a longer one
+# under bcrypt 4 has a hash of its first 72 bytes and must still be able to
+# log in.
+BCRYPT_MAX_BYTES = 72
+
+
+def _bcrypt_input(password: str) -> bytes:
+    return password.encode()[:BCRYPT_MAX_BYTES]
+
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(_bcrypt_input(password), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+    return bcrypt.checkpw(_bcrypt_input(plain_password), hashed_password.encode())
 
 
 def create_access_token(user_id: uuid.UUID, role: str) -> str:
