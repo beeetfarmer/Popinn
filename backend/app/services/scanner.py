@@ -232,6 +232,37 @@ def _ensure_video_assets(
     return changed
 
 
+def _relink_orphaned_subtitle(
+    session: Session,
+    existing: Subtitle,
+    video: Video,
+    language: str,
+    fmt: SubtitleFormat,
+) -> None:
+    """Point an already-known sidecar at `video` if its current video is gone.
+
+    A subtitle row is keyed on the sidecar's own path, and a sidecar keeps its
+    name when the video's container changes. Videos are keyed on file_path
+    including the extension, so re-encoding xyz.mkv to xyz.mp4 does not update a
+    row -- it soft-deletes the mkv and inserts the mp4. The sidecar is untouched
+    on disk, so its row survives still pointing at the soft-deleted mkv, and the
+    new mp4 plays with no subtitles at all.
+
+    Only relink when the current target is really gone. If it is still a live
+    video the ambiguity is genuine (two videos in one folder sharing a stem, say
+    xyz.mkv kept alongside xyz.mp4) and a single foreign key cannot serve both;
+    leaving the existing link alone at least keeps it stable across scans.
+    """
+    if existing.video_id == video.id:
+        return
+    current = session.get(Video, existing.video_id)
+    if current is not None and current.deleted_at is None:
+        return
+    existing.video_id = video.id
+    existing.language = language
+    existing.format = fmt
+
+
 def _process_subtitles(
     session: Session,
     artist_dir: str,
@@ -278,14 +309,16 @@ def _process_subtitles(
         if os.path.dirname(video.file_path) != os.path.dirname(entry.path):
             continue
 
+        fmt = SubtitleFormat.srt if ext == ".srt" else SubtitleFormat.vtt
+
         # Check if subtitle already exists
-        result = session.execute(
+        existing = session.execute(
             select(Subtitle).where(Subtitle.file_path == entry.path)
-        )
-        if result.scalar_one_or_none():
+        ).scalar_one_or_none()
+        if existing:
+            _relink_orphaned_subtitle(session, existing, video, language, fmt)
             continue
 
-        fmt = SubtitleFormat.srt if ext == ".srt" else SubtitleFormat.vtt
         subtitle = Subtitle(
             video_id=video.id,
             file_path=entry.path,
@@ -332,13 +365,15 @@ def _process_subtitles_for_video(
         if not matched:
             continue
 
+        fmt = SubtitleFormat.srt if ext == ".srt" else SubtitleFormat.vtt
+
         existing = session.execute(
             select(Subtitle).where(Subtitle.file_path == entry.path)
         ).scalar_one_or_none()
         if existing:
+            _relink_orphaned_subtitle(session, existing, video, language, fmt)
             continue
 
-        fmt = SubtitleFormat.srt if ext == ".srt" else SubtitleFormat.vtt
         session.add(
             Subtitle(
                 video_id=video.id,
