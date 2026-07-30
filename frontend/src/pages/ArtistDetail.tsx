@@ -1,7 +1,14 @@
-import { useState, useCallback, useEffect } from "react";
-import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  useParams,
+  Link,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import type { ArtistDetail as ArtistDetailType } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import PageTransition from "@/components/PageTransition";
@@ -15,11 +22,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQueue } from "@/contexts/QueueContext";
 
 const PER_PAGE = 10;
+// How many cards infinite scroll adds at a time. The artist payload already
+// contains every video, so this only limits how many are mounted at once --
+// which is the part that makes a large artist page slow.
+const SCROLL_CHUNK = 24;
 const LASTFM_ATTRIBUTION_FOOTER_REGEX =
   /\n*\s*Artist information powered by Last\.fm\s*\n*Last\.fm:\s*(https?:\/\/www\.last\.fm\/music\/\S+)\s*$/i;
 
@@ -73,6 +94,10 @@ interface LastfmArtistSearchItem {
   url: string | null;
 }
 
+interface BrowsingSettings {
+  video_infinite_scroll: boolean;
+}
+
 function getResponsiveRecommendationLimit(): number {
   if (typeof window === "undefined") return 6;
   if (window.innerWidth < 640) return 2;
@@ -116,6 +141,9 @@ export default function ArtistDetail() {
   const [lastfmSearchQuery, setLastfmSearchQuery] = useState("");
   const [lastfmSearching, setLastfmSearching] = useState(false);
   const [lastfmSearchResults, setLastfmSearchResults] = useState<LastfmArtistSearchItem[]>([]);
+  const [lastfmUrlInput, setLastfmUrlInput] = useState("");
+  const [applyingLastfmUrl, setApplyingLastfmUrl] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
   const [metadataSaving, setMetadataSaving] = useState(false);
@@ -151,6 +179,69 @@ export default function ArtistDetail() {
     queryFn: () => api.get(`/artists/${id}`),
     enabled: !!id,
   });
+
+  const { data: browsing } = useQuery<BrowsingSettings>({
+    queryKey: ["browsing-settings"],
+    queryFn: () => api.get("/settings/browsing"),
+  });
+  const infiniteScroll = browsing?.video_infinite_scroll ?? false;
+
+  // How many cards are mounted, kept per history entry so returning from a video
+  // shows the same stretch of the list rather than snapping back to the first
+  // chunk. Scroll position alone is not enough: without the count the page is
+  // too short to scroll back down to.
+  const location = useLocation();
+  // Two keys for the same reason as scroll restoration: an in-app back link is
+  // a push, so it lands on a new history entry with nothing stored against it.
+  // The path fallback is what makes returning to this artist keep its place.
+  const shownEntryKey = `popinn:shown:key:${location.key}`;
+  const shownPathKey = `popinn:shown:path:${location.pathname}`;
+  const [visibleCount, setVisibleCount] = useState(() => {
+    try {
+      const saved = Number(
+        sessionStorage.getItem(shownEntryKey) ??
+          sessionStorage.getItem(shownPathKey)
+      );
+      return Number.isFinite(saved) && saved >= SCROLL_CHUNK ? saved : SCROLL_CHUNK;
+    } catch {
+      return SCROLL_CHUNK;
+    }
+  });
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(shownEntryKey, String(visibleCount));
+      sessionStorage.setItem(shownPathKey, String(visibleCount));
+    } catch {
+      // Not worth breaking the page over a storage quota.
+    }
+  }, [shownEntryKey, shownPathKey, visibleCount]);
+  useEffect(() => {
+    setVisibleCount(SCROLL_CHUNK);
+  }, [id]);
+
+  const totalArtistVideos = artist?.videos.length ?? 0;
+  const canShowMore = infiniteScroll && visibleCount < totalArtistVideos;
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!canShowMore) return;
+    const node = sentinelRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleCount((current) =>
+            Math.min(current + SCROLL_CHUNK, totalArtistVideos)
+          );
+        }
+      },
+      { rootMargin: "600px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [canShowMore, totalArtistVideos]);
+
+  useScrollRestoration(totalArtistVideos > 0);
   const recommendationLimit = artistRecPage * artistRecBaseLimit;
   const { data: artistRecommendations, isLoading: artistRecommendationsLoading } =
     useQuery<ArtistRecommendationsPage>({
@@ -232,6 +323,24 @@ export default function ArtistDetail() {
       toast.error(getErrorMessage(error, "Failed to refresh artist metadata")),
   });
 
+  const resetMetadataMutation = useMutation({
+    mutationFn: () => api.post(`/artists/${id}/reset-metadata`),
+    onSuccess: (updated: { bio: string | null; lastfm_artist_name: string | null }) => {
+      queryClient.invalidateQueries({ queryKey: ["artist", id] });
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      // Keep the open dialog consistent with what the server now holds.
+      setEditBio(parseArtistBio(updated.bio).body);
+      setEditLastfmArtistName(updated.lastfm_artist_name || "");
+      setLastfmSearchQuery(updated.lastfm_artist_name || artist?.name || "");
+      setLastfmSearchResults([]);
+      setLastfmUrlInput("");
+      setResetOpen(false);
+      toast.success("Artist bio and image reset");
+    },
+    onError: (error: unknown) =>
+      toast.error(getErrorMessage(error, "Failed to reset artist")),
+  });
+
   function openEdit() {
     if (artist) {
       setEditName(artist.name);
@@ -239,6 +348,7 @@ export default function ArtistDetail() {
       setEditLastfmArtistName(artist.lastfm_artist_name || "");
       setLastfmSearchQuery(artist.lastfm_artist_name || artist.name);
       setLastfmSearchResults([]);
+      setLastfmUrlInput(parseArtistBio(artist.bio).lastfmUrl || "");
       setEditOpen(true);
     }
   }
@@ -284,6 +394,40 @@ export default function ArtistDetail() {
       toast.success("Last.fm match applied");
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Failed to apply Last.fm artist"));
+    }
+  }
+
+  // Pasting the artist's Last.fm page is the reliable way to pin down an artist
+  // that search cannot disambiguate. The name is extracted server-side, which is
+  // also where the URL is validated.
+  async function applyLastfmUrl() {
+    if (!isAdmin) return;
+    const url = lastfmUrlInput.trim();
+    if (!url) {
+      toast.error("Paste a Last.fm artist link first");
+      return;
+    }
+    setApplyingLastfmUrl(true);
+    try {
+      const updated = await api.post<{
+        lastfm_artist_name: string | null;
+        bio: string | null;
+      }>(`/artists/${id}/lastfm/apply`, { lastfm_url: url });
+      const matchedName = updated.lastfm_artist_name || "";
+      setEditLastfmArtistName(matchedName);
+      setLastfmSearchQuery(matchedName);
+      setEditBio(parseArtistBio(updated.bio).body);
+      queryClient.invalidateQueries({ queryKey: ["artist", id] });
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      toast.success(
+        matchedName
+          ? `Applied Last.fm artist "${matchedName}"`
+          : "Last.fm link applied"
+      );
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to apply Last.fm link"));
+    } finally {
+      setApplyingLastfmUrl(false);
     }
   }
 
@@ -523,7 +667,9 @@ export default function ArtistDetail() {
 
   const totalPages = Math.max(1, Math.ceil(artist.videos.length / PER_PAGE));
   const start = (page - 1) * PER_PAGE;
-  const paginatedVideos = artist.videos.slice(start, start + PER_PAGE);
+  const shownVideos = infiniteScroll
+    ? artist.videos.slice(0, visibleCount)
+    : artist.videos.slice(start, start + PER_PAGE);
   const parsedBio = parseArtistBio(artist.bio);
 
   function startArtistQueue(shuffleQueue: boolean) {
@@ -661,11 +807,21 @@ export default function ArtistDetail() {
 
         <h2 className="mb-4 mt-10 text-xl font-bold text-foreground">Music Videos</h2>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {paginatedVideos.map((v) => (
+          {shownVideos.map((v) => (
             <VideoCard key={v.id} video={v} />
           ))}
         </div>
-        {artist.videos.length > PER_PAGE && (
+        {infiniteScroll && artist.videos.length > 0 && (
+          <>
+            <div ref={sentinelRef} aria-hidden className="h-px" />
+            <div className="mt-6 text-center text-sm text-muted-foreground">
+              {canShowMore
+                ? `Showing ${shownVideos.length} of ${artist.videos.length}`
+                : `All ${artist.videos.length} videos loaded`}
+            </div>
+          </>
+        )}
+        {!infiniteScroll && artist.videos.length > PER_PAGE && (
           <div className="mt-6 flex items-center justify-center gap-3">
             <Button
               variant="outline"
@@ -800,6 +956,30 @@ export default function ArtistDetail() {
                 <p className="mt-2 text-xs text-muted-foreground">
                   Matched artist: {editLastfmArtistName || "Not set"}
                 </p>
+
+                <div className="mt-3 border-t border-border pt-3">
+                  <label className="mb-1 block text-sm font-medium text-foreground">
+                    Or paste a Last.fm artist link
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={lastfmUrlInput}
+                      onChange={(e) => setLastfmUrlInput(e.target.value)}
+                      placeholder="https://www.last.fm/music/Artist"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={applyLastfmUrl}
+                      disabled={applyingLastfmUrl || !lastfmUrlInput.trim()}
+                    >
+                      {applyingLastfmUrl ? "Applying..." : "Apply"}
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Refreshes the bio and image from that exact artist page.
+                  </p>
+                </div>
               </div>
               <Button
                 onClick={() => editMutation.mutate()}
@@ -818,9 +998,46 @@ export default function ArtistDetail() {
                   ? "Refreshing Info..."
                   : "Refresh Info"}
               </Button>
+              <Button
+                variant="outline"
+                onClick={() => setResetOpen(true)}
+                className="w-full text-destructive hover:text-destructive"
+                disabled={resetMetadataMutation.isPending}
+              >
+                {resetMetadataMutation.isPending
+                  ? "Resetting..."
+                  : "Reset Bio & Image"}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
+
+        <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Reset bio and image?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This clears the bio, the image and the matched Last.fm artist for
+                {" "}
+                {artist.name}, deletes any image you uploaded, then looks the
+                artist up on Last.fm again by folder name. Your local edits
+                cannot be recovered.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={resetMetadataMutation.isPending}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => resetMetadataMutation.mutate()}
+                disabled={resetMetadataMutation.isPending}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {resetMetadataMutation.isPending ? "Resetting..." : "Reset"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <Dialog open={metadataOpen && isAdmin} onOpenChange={setMetadataOpen}>
           <DialogContent className="max-w-4xl">

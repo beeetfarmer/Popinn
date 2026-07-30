@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { MAX_PAGE_SIZE, fetchVideoPage } from "@/lib/videos";
 import type { MusicVideo, Artist } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import ArtistCard from "@/components/ArtistCard";
@@ -30,7 +31,8 @@ export default function SearchPage() {
 
   const { data: videos = [], isLoading: loadingVideos } = useQuery<MusicVideo[]>({
     queryKey: ["search-videos", q],
-    queryFn: () => api.get(`/videos/?search=${encodeURIComponent(q)}`),
+    queryFn: async () =>
+      (await fetchVideoPage({ search: q }, 0, MAX_PAGE_SIZE)).items,
     enabled: !!q,
   });
 

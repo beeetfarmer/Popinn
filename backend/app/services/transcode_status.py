@@ -29,6 +29,8 @@ class TranscodeRun:
     total: int = 0
     completed: int = 0
     failed: int = 0
+    cancelled: int = 0
+    cancelling: bool = False
     started_at: datetime | None = None
     finished_at: datetime | None = None
     current: str | None = None
@@ -43,6 +45,8 @@ class TranscodeRun:
             self.total = total
             self.completed = 0
             self.failed = 0
+            self.cancelled = 0
+            self.cancelling = False
             self.current = None
             self.started_at = datetime.now(timezone.utc)
             self.finished_at = None
@@ -52,15 +56,36 @@ class TranscodeRun:
         with self._lock:
             self.current = title
 
-    def record(self, ok: bool) -> None:
+    def request_cancel(self) -> bool:
+        """Ask the run to stop. Returns False if nothing is in flight.
+
+        Jobs already queued check this and return immediately; the encode that is
+        actually running polls it and kills its ffmpeg. The run is not closed
+        here -- every job still reports, so the final counts stay truthful, and
+        short-circuited jobs drain almost instantly.
+        """
+        with self._lock:
+            if not self.active:
+                return False
+            self.cancelling = True
+            return True
+
+    def is_cancelling(self) -> bool:
+        with self._lock:
+            return self.cancelling
+
+    def record(self, ok: bool, *, was_cancelled: bool = False) -> None:
         """Record one finished job, closing the run once all have reported."""
         with self._lock:
-            if ok:
+            if was_cancelled:
+                self.cancelled += 1
+            elif ok:
                 self.completed += 1
             else:
                 self.failed += 1
-            if self.completed + self.failed >= self.total:
+            if self.completed + self.failed + self.cancelled >= self.total:
                 self.active = False
+                self.cancelling = False
                 self.current = None
                 self.finished_at = datetime.now(timezone.utc)
 
@@ -68,17 +93,20 @@ class TranscodeRun:
         """Close out a run that could not be queued."""
         with self._lock:
             self.active = False
+            self.cancelling = False
             self.current = None
             self.finished_at = datetime.now(timezone.utc)
 
     def snapshot(self) -> dict:
         with self._lock:
-            processed = self.completed + self.failed
+            processed = self.completed + self.failed + self.cancelled
             return {
                 "active": self.active,
+                "cancelling": self.cancelling,
                 "total": self.total,
                 "completed": self.completed,
                 "failed": self.failed,
+                "cancelled": self.cancelled,
                 "processed": processed,
                 "current": self.current,
                 "started_at": self.started_at,

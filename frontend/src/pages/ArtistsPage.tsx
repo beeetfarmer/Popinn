@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import type { Artist } from "@/data/mockData";
 import ArtistCard from "@/components/ArtistCard";
 import PageTransition from "@/components/PageTransition";
@@ -18,8 +19,14 @@ export default function ArtistsPage() {
 
   const { data: artists = [], isLoading, isError } = useQuery<Artist[]>({
     queryKey: ["artists"],
-    queryFn: () => api.get("/artists/?limit=200"),
+    // Fetched in one go rather than paged: the A-Z index has to know which
+    // letters exist, which needs the whole list. The old limit of 200 quietly
+    // truncated larger libraries.
+    queryFn: () => api.get("/artists/?limit=2000"),
   });
+
+  // Coming back from an artist should land where you left off, not at the top.
+  useScrollRestoration(artists.length > 0);
 
   const filteredArtists = useMemo(() => {
     const needle = search.trim().toLowerCase();

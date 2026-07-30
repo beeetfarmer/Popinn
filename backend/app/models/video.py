@@ -29,10 +29,21 @@ class Video(Base):
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # When the file itself was created on disk, which is what "recently added"
+    # should mean. added_at is only when this row was inserted, so on a first
+    # scan the whole library shares one timestamp. Nullable because it is
+    # backfilled by the scanner, not by the migration.
+    file_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set alongside deleted_at when the row was hidden because its file vanished
+    # rather than because a user deleted it. That distinction is what lets a
+    # reappearing file be restored while a deliberate deletion stays deleted.
+    # Deliberately a second column rather than a replacement for deleted_at, so
+    # every existing "is this video visible" query keeps working untouched.
+    missing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     artist: Mapped["Artist"] = relationship(back_populates="videos")  # noqa: F821
     subtitles: Mapped[list["Subtitle"]] = relationship(back_populates="video")  # noqa: F821
@@ -46,4 +57,5 @@ class Video(Base):
     __table_args__ = (
         Index("ix_videos_title", "title"),
         Index("ix_videos_artist_id", "artist_id"),
+        Index("ix_videos_file_created_at", "file_created_at"),
     )

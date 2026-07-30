@@ -6,16 +6,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.artist import Artist
 from app.models.subtitle import Subtitle, SubtitleFormat
 from app.models.video import Video
+from app.services.file_times import file_created_at
 from app.services.lastfm import (
     fetch_artist_info,
     is_lastfm_attributed_bio,
 )
+from app.services.media_assets import delete_video_assets
 from app.services.metadata import (
     extract_metadata,
     generate_preview_clip,
@@ -148,7 +150,15 @@ def _process_video(
     )
     existing = result.scalar_one_or_none()
     if existing:
-        # Already tracked (active or user-deleted) — skip it
+        # A row hidden because its file had vanished, whose file is now back:
+        # bring it back rather than leaving it invisible forever. Counted as an
+        # add so the artist is restored too and the scan totals reflect it.
+        if existing.missing_at is not None:
+            existing.deleted_at = None
+            existing.missing_at = None
+            session.flush()
+            return True
+        # Otherwise already tracked (active, or deleted by a user) — skip it.
         return False
 
     title = _parse_title(os.path.basename(file_path), artist_name)
@@ -171,6 +181,7 @@ def _process_video(
         file_size=meta["file_size"],
         thumbnail_path=thumb_path if thumb_ok else None,
         preview_path=preview_path if preview_ok else None,
+        file_created_at=file_created_at(file_path),
     )
     session.add(video)
     session.flush()
@@ -188,6 +199,15 @@ def _ensure_video_assets(
     if video.deleted_at is not None:
         return False
     changed = False
+
+    # Rows that predate the column, and rows whose file was replaced, have no
+    # creation date yet. This is the backfill: it needs the media volume
+    # mounted, which is true here and is not true during a migration.
+    if video.file_created_at is None:
+        created = file_created_at(file_path)
+        if created is not None:
+            video.file_created_at = created
+            changed = True
 
     thumb_missing = (
         not video.thumbnail_path
@@ -210,6 +230,37 @@ def _ensure_video_assets(
             changed = True
 
     return changed
+
+
+def _relink_orphaned_subtitle(
+    session: Session,
+    existing: Subtitle,
+    video: Video,
+    language: str,
+    fmt: SubtitleFormat,
+) -> None:
+    """Point an already-known sidecar at `video` if its current video is gone.
+
+    A subtitle row is keyed on the sidecar's own path, and a sidecar keeps its
+    name when the video's container changes. Videos are keyed on file_path
+    including the extension, so re-encoding xyz.mkv to xyz.mp4 does not update a
+    row -- it soft-deletes the mkv and inserts the mp4. The sidecar is untouched
+    on disk, so its row survives still pointing at the soft-deleted mkv, and the
+    new mp4 plays with no subtitles at all.
+
+    Only relink when the current target is really gone. If it is still a live
+    video the ambiguity is genuine (two videos in one folder sharing a stem, say
+    xyz.mkv kept alongside xyz.mp4) and a single foreign key cannot serve both;
+    leaving the existing link alone at least keeps it stable across scans.
+    """
+    if existing.video_id == video.id:
+        return
+    current = session.get(Video, existing.video_id)
+    if current is not None and current.deleted_at is None:
+        return
+    existing.video_id = video.id
+    existing.language = language
+    existing.format = fmt
 
 
 def _process_subtitles(
@@ -258,14 +309,16 @@ def _process_subtitles(
         if os.path.dirname(video.file_path) != os.path.dirname(entry.path):
             continue
 
+        fmt = SubtitleFormat.srt if ext == ".srt" else SubtitleFormat.vtt
+
         # Check if subtitle already exists
-        result = session.execute(
+        existing = session.execute(
             select(Subtitle).where(Subtitle.file_path == entry.path)
-        )
-        if result.scalar_one_or_none():
+        ).scalar_one_or_none()
+        if existing:
+            _relink_orphaned_subtitle(session, existing, video, language, fmt)
             continue
 
-        fmt = SubtitleFormat.srt if ext == ".srt" else SubtitleFormat.vtt
         subtitle = Subtitle(
             video_id=video.id,
             file_path=entry.path,
@@ -312,13 +365,15 @@ def _process_subtitles_for_video(
         if not matched:
             continue
 
+        fmt = SubtitleFormat.srt if ext == ".srt" else SubtitleFormat.vtt
+
         existing = session.execute(
             select(Subtitle).where(Subtitle.file_path == entry.path)
         ).scalar_one_or_none()
         if existing:
+            _relink_orphaned_subtitle(session, existing, video, language, fmt)
             continue
 
-        fmt = SubtitleFormat.srt if ext == ".srt" else SubtitleFormat.vtt
         session.add(
             Subtitle(
                 video_id=video.id,
@@ -330,16 +385,62 @@ def _process_subtitles_for_video(
     session.flush()
 
 
-def _soft_delete_missing(session: Session, media_path: str) -> None:
-    """Soft-delete videos whose files no longer exist on disk."""
+def _soft_delete_missing(
+    session: Session,
+    media_path: str,
+    app_data_path: str,
+    files_found: int,
+) -> str | None:
+    """Hide videos whose files are gone and delete what was generated for them.
+
+    Returns an error string if the sweep was skipped, otherwise None.
+
+    The guard matters more than the sweep. An unmounted media volume leaves an
+    empty directory behind rather than an error, so without it a single scan
+    against a missing drive would hide the entire library. Videos are marked
+    with missing_at as well as deleted_at, which is what allows a reappearing
+    file to be restored, so a wrongly-swept library is recoverable -- but its
+    generated assets are deleted here, and an HLS rendition costs real time to
+    rebuild. Refusing to sweep is much cheaper than being wrong.
+
+    Only the total-loss case is guarded. A partially missing mount is
+    indistinguishable from a user deleting a folder, and guessing at a threshold
+    would block legitimate bulk removals.
+    """
+    active_count = (
+        session.execute(
+            select(func.count(Video.id)).where(Video.deleted_at.is_(None))
+        ).scalar()
+        or 0
+    )
+    if files_found == 0 and active_count > 0:
+        message = (
+            f"Skipped removing missing videos: no video files were found under "
+            f"{media_path} while {active_count} are indexed. This usually means "
+            f"the media volume is not mounted. Nothing was changed."
+        )
+        logger.error(message)
+        return message
+
     media_root = Path(media_path).resolve(strict=False)
     result = session.execute(
         select(Video).where(Video.deleted_at.is_(None))
     )
+    now = datetime.now(timezone.utc)
     for video in result.scalars():
         if not _is_within_root(video.file_path, media_root) or not os.path.exists(video.file_path):
-            video.deleted_at = datetime.now(timezone.utc)
+            video.deleted_at = now
+            video.missing_at = now
+            delete_video_assets(
+                video.id,
+                video.thumbnail_path,
+                video.preview_path,
+                app_data_path,
+            )
+            video.thumbnail_path = None
+            video.preview_path = None
     session.flush()
+    return None
 
 
 def _raise_if_cancelled(should_cancel: CancelCheckCallback | None) -> None:
@@ -539,8 +640,15 @@ def run_scan(
                     )
 
             _raise_if_cancelled(should_cancel)
-            # Soft-delete videos whose files are gone
-            _soft_delete_missing(session, media_path)
+            # Hide videos whose files are gone, and reclaim their generated files
+            sweep_error = _soft_delete_missing(
+                session,
+                media_path,
+                app_data_path,
+                result.files_found,
+            )
+            if sweep_error:
+                result.errors.append(sweep_error)
             session.commit()
             if progress_callback:
                 progress_callback(

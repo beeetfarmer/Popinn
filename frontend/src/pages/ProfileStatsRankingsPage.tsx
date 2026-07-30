@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { api } from "@/lib/api";
+import { fetchAllVideos } from "@/lib/videos";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -88,8 +89,10 @@ export default function ProfileStatsRankingsPage() {
   });
 
   const { data: videos = [] } = useQuery<MusicVideo[]>({
-    queryKey: ["videos"],
-    queryFn: () => api.get("/videos/?limit=200"),
+    // Rankings are computed over the whole library, so this cannot be a single
+    // capped page -- a cap here silently ranks only part of the collection.
+    queryKey: ["videos", "all"],
+    queryFn: () => fetchAllVideos(),
   });
 
   const filteredHistory = useMemo(() => {

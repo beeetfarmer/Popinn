@@ -10,6 +10,7 @@ SETTING_APP_DATA_PATH = "app_data_path"
 SETTING_TRANSCODING_ENABLED = "transcoding_enabled"
 SETTING_VIEW_THRESHOLD_RATIO = "view_threshold_ratio"
 SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES = "lastfm_override_local_artist_images"
+SETTING_VIDEO_INFINITE_SCROLL = "video_infinite_scroll"
 
 
 def _to_bool(value: str | None, default: bool = False) -> bool:
@@ -88,6 +89,12 @@ async def get_effective_lastfm_override_local_artist_images(db: AsyncSession) ->
         "true",
     )
     return _to_bool(value, default=True)
+
+
+async def get_effective_video_infinite_scroll(db: AsyncSession) -> bool:
+    """Whether video lists scroll continuously instead of using page controls."""
+    value = await get_setting_value(db, SETTING_VIDEO_INFINITE_SCROLL, "false")
+    return _to_bool(value, default=False)
 
 
 def get_setting_value_sync(

@@ -1,4 +1,4 @@
-FROM node:22-alpine AS deps
+FROM node:26-alpine AS deps
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
@@ -14,7 +14,7 @@ FROM deps AS build
 COPY frontend ./
 RUN npm run build
 
-FROM docker.io/nginxinc/nginx-unprivileged:1.27-alpine AS prod
+FROM docker.io/nginxinc/nginx-unprivileged:1.30-alpine AS prod
 USER root
 RUN apk upgrade --no-cache
 COPY deploy/docker/nginx/default.conf /etc/nginx/conf.d/default.conf

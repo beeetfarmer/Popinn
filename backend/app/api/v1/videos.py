@@ -25,12 +25,14 @@ from app.schemas.video import (
     VideoPlayCreate,
     VideoPlayRead,
     VideoPlayStats,
+    VideoPage,
     VideoRead,
     SpotifyTrackMatch,
     VideoUpdate,
 )
 from app.services.background_jobs import submit_job
 from app.services.lastfm import fetch_similar_tracks, normalize_for_match
+from app.services.media_assets import delete_video_assets
 from app.services.metadata import playlist_is_complete
 from app.services.path_urls import to_public_asset_url
 from app.services.playback import is_counted_view
@@ -52,6 +54,10 @@ from app.tasks.media import generate_hls_for_video, transcode_one_and_report
 router = APIRouter(prefix="/videos", tags=["videos"])
 
 SORTABLE_COLUMNS = {
+    # What a user means by "date added": when the file appeared, not when this
+    # row was written. Falls back to added_at for rows the scanner has not
+    # backfilled yet, so ordering stays sensible during the transition.
+    "file_created_at": func.coalesce(Video.file_created_at, Video.added_at),
     "added_at": Video.added_at,
     "title": Video.title,
     "year": Video.year,
@@ -133,44 +139,88 @@ def _video_to_read(
     )
 
 
-@router.get("/", response_model=list[VideoRead])
+@router.get("/genres", response_model=list[str])
+async def list_genres(
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every genre present in the library.
+
+    Derived server-side because a client that only holds one page cannot know
+    which genres exist -- offering a filter built from the current page would
+    hide most of them.
+    """
+    result = await db.execute(
+        select(Video.genre)
+        .where(Video.deleted_at.is_(None), Video.genre.is_not(None))
+        .distinct()
+        .order_by(Video.genre)
+    )
+    return [genre for genre in result.scalars().all() if genre]
+
+
+@router.get("/", response_model=VideoPage)
 async def list_videos(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     search: str | None = Query(None, max_length=200),
     artist_id: uuid.UUID | None = Query(None),
-    sort_by: str = Query("added_at"),
+    genre: str | None = Query(None, max_length=100),
+    sort_by: str = Query("file_created_at"),
     sort_order: str = Query("desc"),
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Video).where(Video.deleted_at.is_(None)).options(selectinload(Video.artist))
-
+    filters = [Video.deleted_at.is_(None)]
     if search:
-        query = query.where(Video.title.ilike(f"%{search}%"))
+        filters.append(Video.title.ilike(f"%{search}%"))
     if artist_id:
-        query = query.where(Video.artist_id == artist_id)
+        filters.append(Video.artist_id == artist_id)
+    if genre:
+        filters.append(Video.genre == genre)
 
-    sort_col = SORTABLE_COLUMNS.get(sort_by, Video.added_at)
-    query = query.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
-    query = query.offset(skip).limit(limit)
+    total = (
+        await db.scalar(select(func.count(Video.id)).where(*filters))
+    ) or 0
+
+    sort_col = SORTABLE_COLUMNS.get(sort_by, SORTABLE_COLUMNS["file_created_at"])
+    query = (
+        select(Video)
+        .where(*filters)
+        .options(selectinload(Video.artist))
+        # Tie-broken by id so paging is stable. Without it, rows sharing a sort
+        # value (a whole library scanned in one pass, or an unset year) can be
+        # returned in a different order per query, which makes videos appear
+        # twice or not at all as the offset moves.
+        .order_by(
+            sort_col.asc() if sort_order == "asc" else sort_col.desc(),
+            Video.id.asc(),
+        )
+        .offset(skip)
+        .limit(limit)
+    )
 
     result = await db.execute(query)
     videos = result.scalars().all()
     media_root = await get_effective_media_path(db)
     app_data_root = await get_effective_app_data_path(db)
     transcoding_enabled = await get_effective_transcoding_enabled(db)
-    return [
-        _video_to_read(
-            v,
-            v.artist.name if v.artist else "",
-            media_root,
-            app_data_root,
-            transcoding_enabled,
-            _user.id,
-        )
-        for v in videos
-    ]
+    return VideoPage(
+        items=[
+            _video_to_read(
+                v,
+                v.artist.name if v.artist else "",
+                media_root,
+                app_data_root,
+                transcoding_enabled,
+                _user.id,
+            )
+            for v in videos
+        ],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.get("/spotify/search", response_model=list[SpotifyTrackMatch])
@@ -568,6 +618,24 @@ async def run_bulk_transcode(
     return {"message": "Transcoding queued", "queued": queued}
 
 
+@router.post("/transcode/cancel", status_code=status.HTTP_202_ACCEPTED)
+async def cancel_bulk_transcode(
+    _admin: User = Depends(get_current_admin),
+):
+    """Stop the current transcode run.
+
+    Queued videos are dropped and the encode in progress is killed, with its
+    partial output discarded so it counts as untranscoded again rather than
+    being served as a seekless stream.
+    """
+    if not get_run().request_cancel():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No transcode run is in progress.",
+        )
+    return {"message": "Cancelling transcode run"}
+
+
 @router.post("/{video_id}/hls", status_code=status.HTTP_202_ACCEPTED)
 async def queue_hls_generation(
     video_id: uuid.UUID,
@@ -577,6 +645,27 @@ async def queue_hls_generation(
     _ = await _get_active_video(video_id, db)
     task_id = submit_job("hls_generation", generate_hls_for_video, str(video_id))
     return {"message": "HLS generation queued", "task_id": task_id}
+
+
+async def _discard_assets(
+    doomed: list[tuple[uuid.UUID, str | None, str | None]],
+    app_data_root: str,
+) -> None:
+    """Delete the generated files for videos that have just been removed.
+
+    Runs after the commit: the row change is what the user asked for, and losing
+    it because a stale thumbnail could not be unlinked would be the wrong
+    trade. Off the event loop because removing an HLS directory is real disk
+    work, not a metadata update.
+    """
+    for video_id, thumbnail_path, preview_path in doomed:
+        await asyncio.to_thread(
+            delete_video_assets,
+            video_id,
+            thumbnail_path,
+            preview_path,
+            app_data_root,
+        )
 
 
 async def _cleanup_empty_artists(artist_ids: set[uuid.UUID], db: AsyncSession):
@@ -606,14 +695,21 @@ async def bulk_delete_videos(
     if not videos:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No videos found")
 
+    app_data_root = await get_effective_app_data_path(db)
     artist_ids: set[uuid.UUID] = set()
     now = datetime.now(timezone.utc)
+    doomed = [
+        (video.id, video.thumbnail_path, video.preview_path) for video in videos
+    ]
     for video in videos:
         artist_ids.add(video.artist_id)
         video.deleted_at = now
+        video.thumbnail_path = None
+        video.preview_path = None
 
     await _cleanup_empty_artists(artist_ids, db)
     await db.commit()
+    await _discard_assets(doomed, app_data_root)
 
 
 @router.delete("/{video_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -627,7 +723,12 @@ async def delete_video(
     if not video:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
+    app_data_root = await get_effective_app_data_path(db)
     artist_id = video.artist_id
+    doomed = [(video.id, video.thumbnail_path, video.preview_path)]
     video.deleted_at = datetime.now(timezone.utc)
+    video.thumbnail_path = None
+    video.preview_path = None
     await _cleanup_empty_artists({artist_id}, db)
     await db.commit()
+    await _discard_assets(doomed, app_data_root)

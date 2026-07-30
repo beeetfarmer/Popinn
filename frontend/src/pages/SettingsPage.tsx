@@ -52,13 +52,16 @@ interface RuntimeSettings {
   transcoding_enabled: boolean;
   view_threshold_percent: number;
   lastfm_override_local_artist_images: boolean;
+  video_infinite_scroll: boolean;
 }
 
 interface TranscodeRunStatus {
   active: boolean;
+  cancelling: boolean;
   total: number;
   completed: number;
   failed: number;
+  cancelled: number;
   processed: number;
   current: string | null;
   started_at: string | null;
@@ -172,7 +175,9 @@ export default function SettingsPage() {
   const [viewThresholdPercent, setViewThresholdPercent] = useState(20);
   const [lastfmOverrideLocalArtistImages, setLastfmOverrideLocalArtistImages] =
     useState(true);
+  const [videoInfiniteScroll, setVideoInfiniteScroll] = useState(false);
   const [pendingDeleteUser, setPendingDeleteUser] = useState<UserItem | null>(null);
+  const [cancelTranscodeOpen, setCancelTranscodeOpen] = useState(false);
 
   const isAdmin = user?.role === "admin";
 
@@ -207,6 +212,7 @@ export default function SettingsPage() {
     setLastfmOverrideLocalArtistImages(
       runtimeSettings.lastfm_override_local_artist_images
     );
+    setVideoInfiniteScroll(runtimeSettings.video_infinite_scroll);
   }, [runtimeSettings]);
 
   const runtimeMutation = useMutation({
@@ -217,9 +223,13 @@ export default function SettingsPage() {
         transcoding_enabled: transcodingEnabled,
         view_threshold_percent: viewThresholdPercent,
         lastfm_override_local_artist_images: lastfmOverrideLocalArtistImages,
+        video_infinite_scroll: videoInfiniteScroll,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
+      // Video lists read this to decide how they paginate, so they have to be
+      // told it changed or they keep their old behaviour until a reload.
+      queryClient.invalidateQueries({ queryKey: ["browsing-settings"] });
       toast.success("Runtime settings saved");
     },
     onError: (error: unknown) =>
@@ -254,8 +264,13 @@ export default function SettingsPage() {
   useEffect(() => {
     if (prevTranscodeActiveRef.current && !transcodeRunActive && transcodeRun) {
       queryClient.invalidateQueries({ queryKey: ["videos"] });
-      const { completed, failed } = transcodeRun;
-      if (failed > 0) {
+      const { completed, failed, cancelled } = transcodeRun;
+      if (cancelled > 0) {
+        toast.info(
+          `Transcoding cancelled: ${completed} done, ${cancelled} skipped` +
+            (failed > 0 ? `, ${failed} failed` : "")
+        );
+      } else if (failed > 0) {
         toast.warning(`Transcoding finished: ${completed} done, ${failed} failed`);
       } else if (completed > 0) {
         toast.success(`Transcoding complete: ${completed} video${completed === 1 ? "" : "s"}`);
@@ -277,6 +292,19 @@ export default function SettingsPage() {
     },
     onError: (error: unknown) =>
       toast.error(getErrorMessage(error, "Failed to start transcoding")),
+  });
+
+  const cancelTranscode = useMutation({
+    mutationFn: () => api.post<{ message: string }>("/videos/transcode/cancel"),
+    onSuccess: () => {
+      setCancelTranscodeOpen(false);
+      toast.success("Cancelling transcode run");
+      queryClient.invalidateQueries({ queryKey: ["transcode-status"] });
+    },
+    onError: (error: unknown) => {
+      setCancelTranscodeOpen(false);
+      toast.error(getErrorMessage(error, "Failed to cancel transcoding"));
+    },
   });
 
   const exportMutation = useMutation({
@@ -823,6 +851,22 @@ export default function SettingsPage() {
                     onCheckedChange={setLastfmOverrideLocalArtistImages}
                   />
                 </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <Label htmlFor="video-infinite-scroll">
+                      Infinite scroll instead of pages
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Video lists and artist pages load more as you scroll rather
+                      than splitting into numbered pages.
+                    </p>
+                  </div>
+                  <Switch
+                    id="video-infinite-scroll"
+                    checked={videoInfiniteScroll}
+                    onCheckedChange={setVideoInfiniteScroll}
+                  />
+                </div>
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
@@ -919,9 +963,15 @@ export default function SettingsPage() {
                       <p>
                         Progress: {transcodeRun.processed}/{transcodeRun.total} videos
                         {transcodeRun.failed > 0 && ` (${transcodeRun.failed} failed)`}
+                        {transcodeRun.cancelled > 0 &&
+                          ` (${transcodeRun.cancelled} cancelled)`}
                       </p>
-                      {transcodeRun.current && (
-                        <p className="truncate">Transcoding: {transcodeRun.current}</p>
+                      {transcodeRun.cancelling ? (
+                        <p>Cancelling: waiting for the current video to stop...</p>
+                      ) : (
+                        transcodeRun.current && (
+                          <p className="truncate">Transcoding: {transcodeRun.current}</p>
+                        )
                       )}
                     </div>
                   </div>
@@ -936,29 +986,46 @@ export default function SettingsPage() {
                   </div>
                 )}
 
-                <Button
-                  variant="secondary"
-                  onClick={() => startTranscode.mutate()}
-                  disabled={
-                    startTranscode.isPending ||
-                    transcodeRunActive ||
-                    transcodePending === 0 ||
-                    !transcodeStatus.transcoding_enabled
-                  }
-                >
-                  {transcodeRunActive ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Transcoding...
-                    </>
-                  ) : startTranscode.isPending ? (
-                    "Starting..."
-                  ) : transcodePending > 0 ? (
-                    `Transcode ${transcodePending} Video${transcodePending === 1 ? "" : "s"}`
-                  ) : (
-                    "Nothing to Transcode"
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => startTranscode.mutate()}
+                    disabled={
+                      startTranscode.isPending ||
+                      transcodeRunActive ||
+                      transcodePending === 0 ||
+                      !transcodeStatus.transcoding_enabled
+                    }
+                  >
+                    {transcodeRunActive ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Transcoding...
+                      </>
+                    ) : startTranscode.isPending ? (
+                      "Starting..."
+                    ) : transcodePending > 0 ? (
+                      `Transcode ${transcodePending} Video${transcodePending === 1 ? "" : "s"}`
+                    ) : (
+                      "Nothing to Transcode"
+                    )}
+                  </Button>
+
+                  {transcodeRunActive && (
+                    <Button
+                      variant="outline"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setCancelTranscodeOpen(true)}
+                      disabled={
+                        cancelTranscode.isPending || !!transcodeRun?.cancelling
+                      }
+                    >
+                      {transcodeRun?.cancelling
+                        ? "Cancelling..."
+                        : "Cancel Transcoding"}
+                    </Button>
                   )}
-                </Button>
+                </div>
               </>
             )}
           </section>
@@ -1109,6 +1176,32 @@ export default function SettingsPage() {
           </section>
         )}
       </div>
+
+      <AlertDialog open={cancelTranscodeOpen} onOpenChange={setCancelTranscodeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel transcoding?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Videos still queued will be skipped, and the one being encoded now
+              is stopped and its partial output discarded, so it counts as not
+              transcoded again. Videos already finished are kept. You can start
+              another run at any time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancelTranscode.isPending}>
+              Keep Transcoding
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => cancelTranscode.mutate()}
+              disabled={cancelTranscode.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {cancelTranscode.isPending ? "Cancelling..." : "Cancel Run"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={!!pendingDeleteUser}

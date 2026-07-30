@@ -22,6 +22,7 @@ class RuntimeSettingsRead(BaseModel):
     transcoding_enabled: bool
     view_threshold_percent: int = Field(ge=1, le=100)
     lastfm_override_local_artist_images: bool
+    video_infinite_scroll: bool = False
 
 
 class RuntimeSettingsUpdate(BaseModel):
@@ -30,11 +31,22 @@ class RuntimeSettingsUpdate(BaseModel):
     transcoding_enabled: bool
     view_threshold_percent: int = Field(ge=1, le=100)
     lastfm_override_local_artist_images: bool = True
+    video_infinite_scroll: bool = False
     model_config = ConfigDict(extra="forbid")
 
 
 class ViewThresholdRead(BaseModel):
     view_threshold_percent: int = Field(ge=1, le=100)
+
+
+class BrowsingSettingsRead(BaseModel):
+    """The subset of settings every signed-in user needs to render a list.
+
+    Separate from RuntimeSettingsRead because that is admin-only, and how a list
+    paginates has to be readable by everyone browsing it.
+    """
+
+    video_infinite_scroll: bool = False
 
 
 class ThumbnailRegenerateResponse(BaseModel):

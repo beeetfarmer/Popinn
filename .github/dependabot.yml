@@ -25,6 +25,14 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    ignore:
+      # TypeScript 7 is held back because typescript-eslint still declares
+      # `peer typescript ">=4.8.4 <6.1.0"`. With everything in one group, that
+      # single package made `npm ci` unresolvable and failed the whole PR --
+      # blocking 58 updates that were perfectly fine. Drop this once
+      # typescript-eslint supports 7.x.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       # One PR per ecosystem rather than one per package: the lockfile is
       # shared, so separate PRs conflict with each other on sight.
@@ -75,3 +83,10 @@ updates:
     # Dependabot would offer it the moment it appears.
     cooldown:
       default-days: 7
+    ignore:
+      # Python 3.14 is held back because psycopg2-binary publishes no wheel for
+      # it, so pip falls back to building from source and the backend image
+      # fails with "pg_config executable not found". Revisit when psycopg2-binary
+      # ships 3.14 wheels, or if the driver moves to psycopg 3.
+      - dependency-name: "python"
+        versions: ["3.14"]
