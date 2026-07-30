@@ -2,9 +2,22 @@ import json
 import logging
 import shutil
 import subprocess
+import tempfile
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class HlsCancelled(Exception):
+    """Raised when a transcode was stopped on request rather than failing."""
+
+
+# How long a terminated ffmpeg is given to exit before it is killed outright.
+_TERMINATE_GRACE_SECONDS = 5
+# How often a running encode is checked for cancellation.
+_CANCEL_POLL_SECONDS = 1.0
 
 
 def _discard_hls_output(out_dir: Path) -> None:
@@ -17,6 +30,61 @@ def _discard_hls_output(out_dir: Path) -> None:
         shutil.rmtree(out_dir, ignore_errors=True)
     except OSError:
         logger.warning("Could not remove incomplete HLS output at %s", out_dir)
+
+
+def _stop_process(proc: subprocess.Popen) -> None:
+    """End an ffmpeg process, escalating to SIGKILL if it ignores SIGTERM."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=_TERMINATE_GRACE_SECONDS)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    proc.kill()
+    try:
+        proc.wait(timeout=_TERMINATE_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        logger.error("ffmpeg pid %s survived SIGKILL", proc.pid)
+
+
+def _run_ffmpeg_cancellable(
+    command: list[str],
+    *,
+    timeout: int,
+    should_cancel: Callable[[], bool] | None,
+) -> tuple[int | None, bytes]:
+    """Run ffmpeg so it can be stopped mid-encode. Returns (returncode, stderr).
+
+    Raises HlsCancelled if cancellation was requested, and TimeoutExpired if the
+    budget ran out, matching what subprocess.run would have raised.
+
+    stderr is written to a temporary file rather than a pipe. Nothing drains the
+    pipe while this loop is polling, and ffmpeg is talkative enough to fill the
+    buffer and then block forever waiting for someone to read it.
+    """
+    with tempfile.TemporaryFile() as stderr_file:
+        proc = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=stderr_file)
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                try:
+                    proc.wait(timeout=_CANCEL_POLL_SECONDS)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+                if should_cancel is not None and should_cancel():
+                    _stop_process(proc)
+                    raise HlsCancelled()
+                if time.monotonic() >= deadline:
+                    _stop_process(proc)
+                    raise subprocess.TimeoutExpired(command, timeout)
+        finally:
+            # Never leave an encode running behind a raised exception.
+            if proc.poll() is None:
+                _stop_process(proc)
+
+        stderr_file.seek(0)
+        return proc.returncode, stderr_file.read()
 
 
 def _ffmpeg_error(stderr: bytes | None, limit: int = 500) -> str:
@@ -130,14 +198,24 @@ def _hls_timeout_seconds(video_path: str) -> int:
     return int(min(7200, max(600, duration * 8)))
 
 
-def generate_hls(video_path: str, output_dir: str) -> str | None:
-    """Generate a simple HLS stream (single variant) and return the playlist path."""
+def generate_hls(
+    video_path: str,
+    output_dir: str,
+    should_cancel: Callable[[], bool] | None = None,
+) -> str | None:
+    """Generate a simple HLS stream (single variant) and return the playlist path.
+
+    Raises HlsCancelled if should_cancel starts returning True mid-encode, having
+    first discarded the partial output. Discarding is what makes a cancelled
+    video count as untranscoded again: coverage is read from disk, so removing
+    the directory is the whole of "mark it as not done".
+    """
     out_dir = Path(output_dir)
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         playlist = out_dir / "index.m3u8"
         segment_pattern = out_dir / "segment_%03d.ts"
-        result = subprocess.run(
+        returncode, stderr = _run_ffmpeg_cancellable(
             [
                 "ffmpeg",
                 "-i",
@@ -185,15 +263,15 @@ def generate_hls(video_path: str, output_dir: str) -> str | None:
                 "-y",
                 str(playlist),
             ],
-            capture_output=True,
             timeout=_hls_timeout_seconds(video_path),
+            should_cancel=should_cancel,
         )
-        if result.returncode != 0:
+        if returncode != 0:
             logger.warning(
                 "ffmpeg HLS failed for %s -> %s: %s",
                 video_path,
                 output_dir,
-                _ffmpeg_error(result.stderr),
+                _ffmpeg_error(stderr),
             )
             _discard_hls_output(out_dir)
             return None
@@ -209,6 +287,16 @@ def generate_hls(video_path: str, output_dir: str) -> str | None:
             _discard_hls_output(out_dir)
             return None
         return str(playlist)
+    except HlsCancelled:
+        # Must be caught before the generic handler below, which would otherwise
+        # turn a deliberate stop into an indistinguishable failure.
+        logger.info(
+            "ffmpeg HLS cancelled for %s -> %s; discarding partial output",
+            video_path,
+            output_dir,
+        )
+        _discard_hls_output(out_dir)
+        raise
     except subprocess.TimeoutExpired:
         logger.warning(
             "ffmpeg HLS timed out for %s -> %s; discarding partial output",

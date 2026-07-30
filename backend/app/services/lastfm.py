@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 import re
 import time
-from urllib.parse import quote
+from urllib.parse import quote, unquote_plus, urlparse
 
 import httpx
 
@@ -229,6 +229,60 @@ def _fetch_artist_page_image_url(artist_name: str) -> str | None:
 def build_lastfm_artist_url(artist_name: str) -> str:
     encoded_artist = quote(artist_name.strip(), safe="")
     return f"https://www.last.fm/music/{encoded_artist}"
+
+
+# Hosts a Last.fm artist link is accepted from. Anything else is rejected rather
+# than guessed at, so a mistyped or unrelated URL fails loudly.
+_LASTFM_HOSTS = {"last.fm", "www.last.fm", "m.last.fm"}
+# Trailing path segments Last.fm appends to an artist page (/+wiki, /+images,
+# /+albums, ...) plus subpages such as /_/Track for a specific song.
+_LASTFM_SUBPAGE_PREFIXES = ("+", "_")
+
+
+def parse_lastfm_artist_url(url: str) -> str | None:
+    """Extract the artist name from a Last.fm artist URL.
+
+    Accepts the forms a browser produces, including a locale prefix
+    (/es/music/...) and any of the artist subpages (/+wiki, /+images). Returns
+    None if this is not a Last.fm artist URL.
+
+    Names arrive percent-encoded with spaces as "+", which is exactly what
+    unquote_plus reverses -- and it correctly leaves a literal "+" in a name
+    (encoded as %2B) alone.
+    """
+    candidate = (url or "").strip()
+    if not candidate:
+        return None
+    # Tolerate a pasted "www.last.fm/music/..." with no scheme, which urlparse
+    # would otherwise read as a path with no host.
+    if "//" not in candidate:
+        candidate = f"https://{candidate}"
+
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if (parsed.hostname or "").lower() not in _LASTFM_HOSTS:
+        return None
+
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    try:
+        music_at = segments.index("music")
+    except ValueError:
+        return None
+    if music_at + 1 >= len(segments):
+        return None
+
+    # Tested before decoding: unquote_plus turns a leading "+" into a space,
+    # so /music/+wiki would otherwise decode to the artist name "wiki".
+    raw_name = segments[music_at + 1]
+    if raw_name.startswith(_LASTFM_SUBPAGE_PREFIXES):
+        return None
+
+    name = unquote_plus(raw_name).strip()
+    return name or None
 
 
 def _strip_existing_attribution(text: str) -> str:

@@ -31,6 +31,20 @@ class VideoRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class VideoPage(BaseModel):
+    """One page of videos plus the size of the full match.
+
+    The total is what makes real paging possible. Without it a client can only
+    slice whatever it happened to be given, which is how the library came to
+    show 50 videos across 5 pages regardless of its actual size.
+    """
+
+    items: list[VideoRead]
+    total: int
+    skip: int
+    limit: int
+
+
 class VideoUpdate(BaseModel):
     title: str | None = None
     album: str | None = None
@@ -92,9 +106,11 @@ class TranscodeRunStatus(BaseModel):
     """State of a bulk transcode run currently in flight."""
 
     active: bool = False
+    cancelling: bool = False
     total: int = 0
     completed: int = 0
     failed: int = 0
+    cancelled: int = 0
     processed: int = 0
     current: str | None = None
     started_at: datetime | None = None

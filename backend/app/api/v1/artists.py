@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -31,6 +32,7 @@ from app.services.lastfm import (
     fetch_artist_info,
     fetch_similar_artists,
     normalize_for_match,
+    parse_lastfm_artist_url,
     search_artists,
 )
 from app.services.path_urls import is_external_url, to_public_asset_url
@@ -42,8 +44,31 @@ from app.services.runtime_settings import (
 )
 from app.services.stream_tokens import sign_stream_url_for_user
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/artists", tags=["artists"])
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+ARTIST_IMAGE_DIR_NAME = ".artist-images"
+
+
+def _remove_stored_artist_image(image_path: str, app_data_root: str) -> None:
+    """Delete an uploaded artist image, ignoring anything outside our own store.
+
+    The path comes from the database and is only ever written by the upload
+    endpoint, but it is checked rather than trusted: this deletes files, and a
+    row that somehow pointed elsewhere must not be able to aim it.
+    """
+    target = Path(image_path)
+    store = Path(app_data_root) / ARTIST_IMAGE_DIR_NAME
+    try:
+        target.resolve(strict=False).relative_to(store.resolve(strict=False))
+    except ValueError:
+        logger.warning("Refusing to delete artist image outside %s: %s", store, target)
+        return
+    try:
+        target.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Could not delete artist image %s", target, exc_info=True)
 
 
 def _asset_url(
@@ -113,7 +138,10 @@ def _video_to_read(
 @router.get("/", response_model=list[ArtistRead])
 async def list_artists(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    # Artists are one small row each and the A-Z index needs all of them at once
+    # to know which letters exist, so this is deliberately high rather than
+    # paged. The old ceiling of 200 silently truncated larger libraries.
+    limit: int = Query(500, ge=1, le=5000),
     search: str | None = Query(None, max_length=200),
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -199,7 +227,18 @@ async def apply_lastfm_artist_match(
             detail="Last.fm integration is not configured on the server",
         )
 
-    chosen_name = body.lastfm_artist_name.strip()
+    if (body.lastfm_url or "").strip():
+        chosen_name = parse_lastfm_artist_url(body.lastfm_url or "") or ""
+        if not chosen_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "That does not look like a Last.fm artist link. Expected "
+                    "something like https://www.last.fm/music/Artist Name"
+                ),
+            )
+    else:
+        chosen_name = (body.lastfm_artist_name or "").strip()
     if not chosen_name:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -523,6 +562,88 @@ async def refresh_artist_metadata(
     )
 
 
+@router.post("/{artist_id}/reset-metadata", response_model=ArtistRead)
+async def reset_artist_metadata(
+    artist_id: uuid.UUID,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Discard local bio/image edits and pull the artist fresh from Last.fm.
+
+    Distinct from refresh-metadata, which keeps whatever Last.fm name was
+    previously chosen and only fills gaps. Reset throws that choice away too and
+    looks the artist up by folder name again, which is the way back when a wrong
+    match has been applied. An uploaded image is deleted rather than orphaned.
+
+    Clearing happens even when Last.fm is unavailable -- a reset that silently
+    did nothing because the network was down would be worse than an empty bio.
+    """
+    result = await db.execute(
+        select(Artist).where(Artist.id == artist_id, Artist.deleted_at.is_(None))
+    )
+    artist = result.scalar_one_or_none()
+    if not artist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
+
+    app_data_root = await get_effective_app_data_path(db)
+    previous_image = artist.image_path
+
+    artist.bio = None
+    artist.image_path = None
+    artist.lastfm_artist_name = None
+    artist.lastfm_fetched_at = None
+
+    api_key = settings.LASTFM_API_KEY.strip()
+    refreshed = False
+    if api_key:
+        info = await asyncio.to_thread(fetch_artist_info, artist.name.strip(), api_key)
+        if info:
+            fetched_bio = info.get("bio")
+            fetched_image_url = info.get("image_url")
+            artist.lastfm_artist_name = (
+                info.get("artist_name") or artist.name
+            ).strip()
+            if fetched_bio:
+                artist.bio = fetched_bio
+            if fetched_image_url:
+                artist.image_path = fetched_image_url
+            artist.lastfm_fetched_at = datetime.now(timezone.utc)
+            refreshed = True
+
+    await db.commit()
+    await db.refresh(artist)
+
+    # Only once the row no longer references it, and only for a file we stored.
+    if previous_image and not is_external_url(previous_image):
+        await asyncio.to_thread(_remove_stored_artist_image, previous_image, app_data_root)
+
+    logger.info(
+        "Reset metadata for artist %s (lastfm refreshed=%s)", artist.name, refreshed
+    )
+
+    count_result = await db.execute(
+        select(func.count(Video.id)).where(Video.artist_id == artist.id, Video.deleted_at.is_(None))
+    )
+    video_count = count_result.scalar() or 0
+    media_root = await get_effective_media_path(db)
+
+    return ArtistRead(
+        id=artist.id,
+        name=artist.name,
+        lastfm_artist_name=artist.lastfm_artist_name,
+        bio=artist.bio,
+        image_url=_asset_url(
+            artist.image_path,
+            media_root,
+            app_data_root,
+            cache_bust=True,
+            user_id=admin.id,
+        ),
+        video_count=video_count,
+        created_at=artist.created_at,
+    )
+
+
 @router.delete("/{artist_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_artist(
     artist_id: uuid.UUID,
@@ -560,7 +681,7 @@ async def upload_artist_image(
     ext = (os.path.splitext(file.filename or "img.jpg")[1] or ".jpg").lower()
     if ext not in ALLOWED_IMAGE_EXTENSIONS:
         ext = ".jpg"
-    image_dir = os.path.join(app_data_root, ".artist-images")
+    image_dir = os.path.join(app_data_root, ARTIST_IMAGE_DIR_NAME)
     os.makedirs(image_dir, exist_ok=True)
     image_path = os.path.join(image_dir, f"{artist.id}{ext}")
 

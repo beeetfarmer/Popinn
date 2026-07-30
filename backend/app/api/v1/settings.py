@@ -14,6 +14,7 @@ from app.models.system import Setting
 from app.models.user import User
 from app.models.video import Video
 from app.schemas.settings import (
+    BrowsingSettingsRead,
     PlaybackExportItem,
     RuntimeSettingsRead,
     RuntimeSettingsUpdate,
@@ -32,11 +33,13 @@ from app.services.runtime_settings import (
     SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES,
     SETTING_MEDIA_PATH,
     SETTING_TRANSCODING_ENABLED,
+    SETTING_VIDEO_INFINITE_SCROLL,
     SETTING_VIEW_THRESHOLD_RATIO,
     get_effective_app_data_path,
     get_effective_lastfm_override_local_artist_images,
     get_effective_media_path,
     get_effective_transcoding_enabled,
+    get_effective_video_infinite_scroll,
     get_effective_view_threshold_ratio,
     set_setting_value,
 )
@@ -49,6 +52,7 @@ EXPORTABLE_SETTING_KEYS = {
     SETTING_TRANSCODING_ENABLED,
     SETTING_VIEW_THRESHOLD_RATIO,
     SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES,
+    SETTING_VIDEO_INFINITE_SCROLL,
 }
 
 
@@ -88,6 +92,7 @@ async def get_runtime_settings(
         transcoding_enabled=await get_effective_transcoding_enabled(db),
         view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
         lastfm_override_local_artist_images=await get_effective_lastfm_override_local_artist_images(db),
+        video_infinite_scroll=await get_effective_video_infinite_scroll(db),
     )
 
 
@@ -157,6 +162,11 @@ async def update_runtime_settings(
         SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES,
         "true" if body.lastfm_override_local_artist_images else "false",
     )
+    await set_setting_value(
+        db,
+        SETTING_VIDEO_INFINITE_SCROLL,
+        "true" if body.video_infinite_scroll else "false",
+    )
     if abs(existing_threshold_ratio - threshold_ratio) > 1e-9:
         await db.execute(
             update(VideoPlay).values(
@@ -182,6 +192,7 @@ async def update_runtime_settings(
         transcoding_enabled=body.transcoding_enabled,
         view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
         lastfm_override_local_artist_images=body.lastfm_override_local_artist_images,
+        video_infinite_scroll=body.video_infinite_scroll,
     )
 
 
@@ -193,6 +204,17 @@ async def get_view_threshold(
     threshold_ratio = await get_effective_view_threshold_ratio(db)
     return ViewThresholdRead(
         view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
+    )
+
+
+@router.get("/browsing", response_model=BrowsingSettingsRead)
+async def get_browsing_settings(
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List behaviour every signed-in user needs, not just admins."""
+    return BrowsingSettingsRead(
+        video_infinite_scroll=await get_effective_video_infinite_scroll(db),
     )
 
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.schemas.video import VideoRead
 
@@ -49,5 +49,19 @@ class LastfmArtistSearchItem(BaseModel):
 
 
 class LastfmArtistApplyRequest(BaseModel):
-    lastfm_artist_name: str
+    """Which Last.fm artist to pull metadata from.
+
+    Either a name picked from search results, or a pasted artist URL. The URL
+    form exists because search cannot always disambiguate similarly named
+    artists, and the page you actually want is the one you are looking at.
+    """
+
+    lastfm_artist_name: str | None = None
+    lastfm_url: str | None = None
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _require_one(self) -> "LastfmArtistApplyRequest":
+        if not (self.lastfm_artist_name or "").strip() and not (self.lastfm_url or "").strip():
+            raise ValueError("Provide either lastfm_artist_name or lastfm_url")
+        return self

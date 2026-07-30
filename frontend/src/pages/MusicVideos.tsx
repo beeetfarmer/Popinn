@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import {
+  fetchAllVideos,
+  fetchVideoPage,
+  type VideoQuery,
+} from "@/lib/videos";
+import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import type { MusicVideo, Artist } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import PageTransition from "@/components/PageTransition";
@@ -38,6 +50,13 @@ import {
 } from "@/components/ui/alert-dialog";
 
 const PER_PAGE = 12;
+// Larger than a page: with infinite scroll the cost of a request is a pause in
+// scrolling, so fewer and bigger reads feel better than many small ones.
+const SCROLL_CHUNK = 24;
+
+interface BrowsingSettings {
+  video_infinite_scroll: boolean;
+}
 
 export default function MusicVideosPage() {
   const { user } = useAuth();
@@ -74,73 +93,110 @@ export default function MusicVideosPage() {
     },
     [setSearchParams]
   );
-  const [sortBy, setSortBy] = useState("added_at");
+  const [sortBy, setSortBy] = useState("file_created_at");
   const [sortOrder, setSortOrder] = useState("desc");
   const [filterArtist, setFilterArtist] = useState("all");
   const [filterGenre, setFilterGenre] = useState("all");
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false);
+  const [queueLoading, setQueueLoading] = useState(false);
 
-  const { data: videos = [], isLoading: videosLoading, isError: videosError } = useQuery<MusicVideo[]>({
-    queryKey: ["videos"],
-    queryFn: () => api.get("/videos/"),
+  const { data: browsing, isLoading: browsingLoading } =
+    useQuery<BrowsingSettings>({
+      queryKey: ["browsing-settings"],
+      queryFn: () => api.get("/settings/browsing"),
+    });
+  const infiniteScroll = browsing?.video_infinite_scroll ?? false;
+  // Both queries stay mounted and are switched with `enabled`, so the hook order
+  // never changes. Waiting for the setting first avoids firing a paged request
+  // that infinite scroll would immediately discard.
+  const settingsReady = !browsingLoading;
+
+  // Filtering and sorting are the server's job now. Doing them here only ever
+  // worked on whatever subset had been downloaded, which is why the library
+  // appeared to be 50 videos long.
+  const query: VideoQuery = useMemo(
+    () => ({
+      artist_id: filterArtist,
+      genre: filterGenre,
+      sort_by: sortBy,
+      sort_order: sortOrder,
+    }),
+    [filterArtist, filterGenre, sortBy, sortOrder]
+  );
+
+  const pagedQuery = useQuery({
+    queryKey: ["videos", "paged", query, page],
+    queryFn: () => fetchVideoPage(query, (page - 1) * PER_PAGE, PER_PAGE),
+    enabled: settingsReady && !infiniteScroll,
+    // Keeps the previous page on screen while the next loads, instead of
+    // blanking the grid on every click.
+    placeholderData: keepPreviousData,
+  });
+
+  const scrollQuery = useInfiniteQuery({
+    queryKey: ["videos", "scroll", query],
+    queryFn: ({ pageParam }) => fetchVideoPage(query, pageParam, SCROLL_CHUNK),
+    initialPageParam: 0,
+    getNextPageParam: (last) => {
+      const loaded = last.skip + last.items.length;
+      return loaded < last.total ? loaded : undefined;
+    },
+    enabled: settingsReady && infiniteScroll,
   });
 
   const { data: artists = [] } = useQuery<Artist[]>({
     queryKey: ["artists"],
-    queryFn: () => api.get("/artists/"),
+    queryFn: () => api.get("/artists/?limit=2000"),
   });
 
-  const genres = useMemo(() => {
-    const set = new Set<string>();
-    videos.forEach((v) => { if (v.genre) set.add(v.genre); });
-    return Array.from(set).sort();
-  }, [videos]);
+  // Genres come from the server for the same reason as the video list: a filter
+  // built from the current page would only offer the genres on that page.
+  const { data: genres = [] } = useQuery<string[]>({
+    queryKey: ["video-genres"],
+    queryFn: () => api.get("/videos/genres"),
+  });
 
-  const filtered = useMemo(() => {
-    let list = [...videos];
-
-    if (filterArtist !== "all") {
-      list = list.filter((v) => v.artist_id === filterArtist);
+  const visible: MusicVideo[] = useMemo(() => {
+    if (infiniteScroll) {
+      return scrollQuery.data?.pages.flatMap((p) => p.items) ?? [];
     }
-    if (filterGenre !== "all") {
-      list = list.filter((v) => v.genre === filterGenre);
-    }
+    return pagedQuery.data?.items ?? [];
+  }, [infiniteScroll, scrollQuery.data, pagedQuery.data]);
 
-    list.sort((a, b) => {
-      let valA: string | number;
-      let valB: string | number;
-      switch (sortBy) {
-        case "title":
-          valA = a.title.toLowerCase();
-          valB = b.title.toLowerCase();
-          break;
-        case "year":
-          valA = a.year || 0;
-          valB = b.year || 0;
-          break;
-        case "album":
-          valA = (a.album || "").toLowerCase();
-          valB = (b.album || "").toLowerCase();
-          break;
-        default:
-          valA = a.added_at || "";
-          valB = b.added_at || "";
-      }
-      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
-      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
-      return 0;
-    });
+  const total = infiniteScroll
+    ? scrollQuery.data?.pages[0]?.total ?? 0
+    : pagedQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
-    return list;
-  }, [videos, filterArtist, filterGenre, sortBy, sortOrder]);
+  const videosLoading = infiniteScroll
+    ? scrollQuery.isLoading
+    : pagedQuery.isLoading;
+  const videosError = infiniteScroll ? scrollQuery.isError : pagedQuery.isError;
 
-  const totalPages = Math.ceil(filtered.length / PER_PAGE);
-  const visible = useMemo(
-    () => filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE),
-    [filtered, page]
-  );
+  useScrollRestoration(visible.length > 0);
+
+  // Load the next chunk slightly before the sentinel is actually visible, so
+  // scrolling does not stop dead while waiting for a response.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = scrollQuery;
+  useEffect(() => {
+    if (!infiniteScroll) return;
+    const node = sentinelRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage();
+        }
+      },
+      { rootMargin: "600px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [infiniteScroll, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   // Reset page when filters/sort change -- but not on mount, which would
   // immediately discard a page restored from the URL when coming back from a
@@ -161,12 +217,20 @@ export default function MusicVideosPage() {
     setPageRef.current(1);
   }, [filterArtist, filterGenre, sortBy, sortOrder]);
 
+  // A page that no longer exists (last page emptied by a delete, or a stale URL)
+  // would otherwise show an empty grid with no way back.
+  useEffect(() => {
+    if (infiniteScroll || pagedQuery.isLoading) return;
+    if (page > totalPages) setPageRef.current(totalPages);
+  }, [infiniteScroll, page, totalPages, pagedQuery.isLoading]);
+
   const bulkDelete = useMutation({
     mutationFn: () =>
       api.post("/videos/bulk-delete", { video_ids: Array.from(selected) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["videos"] });
       queryClient.invalidateQueries({ queryKey: ["artists"] });
+      queryClient.invalidateQueries({ queryKey: ["video-genres"] });
       toast.success(`Deleted ${selected.size} video${selected.size > 1 ? "s" : ""}`);
       setSelected(new Set());
       setSelectMode(false);
@@ -198,14 +262,32 @@ export default function MusicVideosPage() {
     setSelected(new Set());
   }
 
-  function startLibraryQueue(shuffleQueue: boolean) {
-    if (filtered.length === 0) {
+  // Queues the whole filtered library, not just what is on screen. The page only
+  // holds a slice now, so the full set has to be fetched to play it.
+  async function startLibraryQueue(shuffleQueue: boolean) {
+    if (total === 0) {
       toast.error("No videos available for playback");
       return;
     }
-    const queue = shuffleQueue ? [...filtered].sort(() => Math.random() - 0.5) : filtered;
-    startQueue(queue, { startIndex: 0 });
-    navigate(`/video/${queue[0].id}`);
+    setQueueLoading(true);
+    try {
+      const all = await fetchAllVideos(query);
+      if (all.length === 0) {
+        toast.error("No videos available for playback");
+        return;
+      }
+      const queue = shuffleQueue
+        ? [...all].sort(() => Math.random() - 0.5)
+        : all;
+      startQueue(queue, { startIndex: 0 });
+      navigate(`/video/${queue[0].id}`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not build the play queue"
+      );
+    } finally {
+      setQueueLoading(false);
+    }
   }
 
   return (
@@ -213,11 +295,21 @@ export default function MusicVideosPage() {
       <div>
         <div className="mb-6 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-foreground">Music Videos</h1>
-          <span className="text-sm text-muted-foreground">({filtered.length})</span>
-          <Button variant="outline" size="sm" onClick={() => startLibraryQueue(false)}>
+          <span className="text-sm text-muted-foreground">({total})</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={queueLoading}
+            onClick={() => startLibraryQueue(false)}
+          >
             <Play className="mr-1 h-4 w-4" /> Play All
           </Button>
-          <Button variant="outline" size="sm" onClick={() => startLibraryQueue(true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={queueLoading}
+            onClick={() => startLibraryQueue(true)}
+          >
             <Shuffle className="mr-1 h-4 w-4" /> Shuffle
           </Button>
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -228,7 +320,7 @@ export default function MusicVideosPage() {
             ) : isAdmin ? (
               <>
                 <Button variant="outline" size="sm" onClick={toggleAll}>
-                  {selected.size === visible.length ? (
+                  {selected.size === visible.length && visible.length > 0 ? (
                     <><CheckSquare className="mr-1 h-4 w-4" /> Deselect All</>
                   ) : (
                     <><Square className="mr-1 h-4 w-4" /> Select All</>
@@ -282,7 +374,8 @@ export default function MusicVideosPage() {
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="added_at">Date Added</SelectItem>
+              <SelectItem value="file_created_at">Date Added</SelectItem>
+              <SelectItem value="added_at">Date Scanned</SelectItem>
               <SelectItem value="title">Title</SelectItem>
               <SelectItem value="year">Year</SelectItem>
               <SelectItem value="album">Album</SelectItem>
@@ -332,12 +425,27 @@ export default function MusicVideosPage() {
           </div>
         )}
 
-        {filtered.length === 0 && (
+        {!videosLoading && !videosError && total === 0 && (
           <p className="py-12 text-center text-muted-foreground">No videos match your filters</p>
         )}
 
+        {/* Infinite scroll: sentinel plus a live count, so it is clear whether
+            more is coming or the end has been reached. */}
+        {infiniteScroll && !videosError && total > 0 && (
+          <>
+            <div ref={sentinelRef} aria-hidden className="h-px" />
+            <div className="mt-8 text-center text-sm text-muted-foreground">
+              {isFetchingNextPage
+                ? "Loading more..."
+                : hasNextPage
+                  ? `Showing ${visible.length} of ${total}`
+                  : `All ${total} videos loaded`}
+            </div>
+          </>
+        )}
+
         {/* Pagination */}
-        {totalPages > 1 && (
+        {!infiniteScroll && totalPages > 1 && (
           <div className="mt-8 flex items-center justify-center gap-2">
             <Button
               variant="outline"
@@ -353,7 +461,7 @@ export default function MusicVideosPage() {
             <Button
               variant="outline"
               size="sm"
-              disabled={page === totalPages}
+              disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
             >
               <ChevronRight className="h-4 w-4" />

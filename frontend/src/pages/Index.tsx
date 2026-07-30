@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { MAX_PAGE_SIZE, fetchVideoPage } from "@/lib/videos";
 import type { MusicVideo, Artist } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import ArtistCard from "@/components/ArtistCard";
@@ -31,7 +32,7 @@ export default function Index() {
   const [showAllRecentArtists, setShowAllRecentArtists] = useState(false);
   const { data: videos = [], isLoading: videosLoading, isError: videosError } = useQuery<MusicVideo[]>({
     queryKey: ["videos"],
-    queryFn: () => api.get("/videos/?limit=200"),
+    queryFn: async () => (await fetchVideoPage({}, 0, MAX_PAGE_SIZE)).items,
   });
 
   const { data: artists = [], isLoading: artistsLoading, isError: artistsError } = useQuery<Artist[]>({
