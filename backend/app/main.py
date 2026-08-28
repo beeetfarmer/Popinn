@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
@@ -23,11 +24,13 @@ from app.core.http_security import enforce_csrf_for_request
 from app.core.logging_setup import configure_logging
 from app.core.rate_limit import rate_limiter
 from app.models.system import ScanJob, ScanStatus
-from app.services.background_jobs import shutdown_background_jobs
+from app.services.background_jobs import shutdown_background_jobs, submit_job
 from app.services.runtime_settings import (
     get_effective_app_data_path,
+    get_effective_library_scan_interval_minutes,
     get_effective_media_path,
 )
+from app.tasks.scan import run_library_scan
 from app.services.stream_tokens import validate_stream_token_for_resource
 
 logger = logging.getLogger(__name__)
@@ -60,13 +63,48 @@ async def _recover_orphaned_scan_jobs() -> None:
         logger.warning("Recovered %s orphaned scan job(s) after startup", len(jobs))
 
 
+async def _auto_scan_loop() -> None:
+    # ponytail: single-process scheduler. Two backend replicas would each run
+    # this loop; the "already active" check makes a double-scan unlikely but not
+    # impossible under a race. Move to a DB advisory lock if you run replicas.
+    poll_seconds = 60
+    last_run = time.monotonic()  # wait one full interval before the first auto-scan
+    while True:
+        try:
+            await asyncio.sleep(poll_seconds)
+            async with async_session() as db:
+                minutes = await get_effective_library_scan_interval_minutes(db)
+                if minutes <= 0 or time.monotonic() - last_run < minutes * 60:
+                    continue
+                active = await db.scalar(
+                    select(ScanJob).where(
+                        ScanJob.status.in_([ScanStatus.pending, ScanStatus.running])
+                    )
+                )
+                if active is not None:
+                    continue
+                job = ScanJob()
+                db.add(job)
+                await db.commit()
+                await db.refresh(job)
+            submit_job("scan", run_library_scan, str(job.id), cancel_key=str(job.id))
+            last_run = time.monotonic()
+            logger.info("Automatic library scan queued (every %s min)", minutes)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Automatic scan loop error; retrying next cycle")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_logging()
     await _recover_orphaned_scan_jobs()
+    auto_scan_task = asyncio.create_task(_auto_scan_loop())
     try:
         yield
     finally:
+        auto_scan_task.cancel()
         shutdown_background_jobs(wait=False)
 
 

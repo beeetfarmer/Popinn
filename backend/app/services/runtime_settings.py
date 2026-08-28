@@ -11,6 +11,7 @@ SETTING_TRANSCODING_ENABLED = "transcoding_enabled"
 SETTING_VIEW_THRESHOLD_RATIO = "view_threshold_ratio"
 SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES = "lastfm_override_local_artist_images"
 SETTING_VIDEO_INFINITE_SCROLL = "video_infinite_scroll"
+SETTING_LIBRARY_SCAN_INTERVAL_MINUTES = "library_scan_interval_minutes"
 
 
 def _to_bool(value: str | None, default: bool = False) -> bool:
@@ -95,6 +96,16 @@ async def get_effective_video_infinite_scroll(db: AsyncSession) -> bool:
     """Whether video lists scroll continuously instead of using page controls."""
     value = await get_setting_value(db, SETTING_VIDEO_INFINITE_SCROLL, "false")
     return _to_bool(value, default=False)
+
+
+async def get_effective_library_scan_interval_minutes(db: AsyncSession) -> int:
+    """Minutes between automatic library scans; 0 (or negative) disables it."""
+    default = max(0, settings.LIBRARY_SCAN_INTERVAL_MINUTES)
+    value = await get_setting_value(db, SETTING_LIBRARY_SCAN_INTERVAL_MINUTES, str(default))
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
 
 
 def get_setting_value_sync(

@@ -51,6 +51,7 @@ interface RuntimeSettings {
   app_data_path: string;
   transcoding_enabled: boolean;
   view_threshold_percent: number;
+  library_scan_interval_minutes: number;
   lastfm_override_local_artist_images: boolean;
   video_infinite_scroll: boolean;
 }
@@ -176,6 +177,7 @@ export default function SettingsPage() {
   const [lastfmOverrideLocalArtistImages, setLastfmOverrideLocalArtistImages] =
     useState(true);
   const [videoInfiniteScroll, setVideoInfiniteScroll] = useState(false);
+  const [libraryScanIntervalMinutes, setLibraryScanIntervalMinutes] = useState(0);
   const [pendingDeleteUser, setPendingDeleteUser] = useState<UserItem | null>(null);
   const [cancelTranscodeOpen, setCancelTranscodeOpen] = useState(false);
 
@@ -213,6 +215,7 @@ export default function SettingsPage() {
       runtimeSettings.lastfm_override_local_artist_images
     );
     setVideoInfiniteScroll(runtimeSettings.video_infinite_scroll);
+    setLibraryScanIntervalMinutes(runtimeSettings.library_scan_interval_minutes);
   }, [runtimeSettings]);
 
   const runtimeMutation = useMutation({
@@ -224,6 +227,7 @@ export default function SettingsPage() {
         view_threshold_percent: viewThresholdPercent,
         lastfm_override_local_artist_images: lastfmOverrideLocalArtistImages,
         video_infinite_scroll: videoInfiniteScroll,
+        library_scan_interval_minutes: libraryScanIntervalMinutes,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
@@ -866,6 +870,28 @@ export default function SettingsPage() {
                     checked={videoInfiniteScroll}
                     onCheckedChange={setVideoInfiniteScroll}
                   />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="library-scan-interval">
+                    Automatic library scan interval (minutes)
+                  </Label>
+                  <Input
+                    id="library-scan-interval"
+                    type="number"
+                    min={0}
+                    max={10080}
+                    step={1}
+                    value={libraryScanIntervalMinutes}
+                    onChange={(e) =>
+                      setLibraryScanIntervalMinutes(
+                        Math.max(0, Math.min(10080, Number(e.target.value) || 0))
+                      )
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Rescan the media library automatically this often. Set to 0 to
+                    disable and scan only on demand.
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   <Button

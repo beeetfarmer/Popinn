@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     EXTERNAL_API_MAX_RETRIES: int = 2
     EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 0.5
     BACKGROUND_WORKERS: int = 2
+    LIBRARY_SCAN_INTERVAL_MINUTES: int = 0  # 0 disables the automatic periodic scan
     VIEW_THRESHOLD_RATIO: float = 0.2
     MAX_IMAGE_UPLOAD_BYTES: int = 5 * 1024 * 1024
     MAX_SETTINGS_IMPORT_BYTES: int = 10 * 1024 * 1024
