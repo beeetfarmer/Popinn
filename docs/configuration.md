@@ -155,7 +155,7 @@ artist biographies or artwork.
 | `LASTFM_API_KEY` | Artist biographies and images. Free key from <https://www.last.fm/api/account/create>. |
 | `LASTFM_CACHE_TTL_HOURS` | How long artist metadata is cached before it is eligible for refresh. Default `168` (one week). |
 | `SPOTIFY_CLIENT_ID` | Track metadata lookup |
-| `SPOTIFY_CLIENT_SECRET` | Track metadata lookup. Credentials from <https://developer.spotify.com/dashboard> (a free developer app — no paid Spotify subscription required). |
+| `SPOTIFY_CLIENT_SECRET` | Track metadata lookup. Credentials from <https://developer.spotify.com/dashboard>. Since February 2026, a development-mode app requires its owner to hold an active **Spotify Premium** subscription or the API stops working. |
 
 ### Track metadata provider
 
@@ -165,11 +165,14 @@ Settings → Metadata search provider**. The default is Spotify when its
 credentials are set, otherwise MusicBrainz.
 
 - **Spotify** needs the credentials above and returns title, album, year and
-  genre.
+  genre. Note that since February 2026 a development-mode app requires its owner
+  to have an active Spotify Premium subscription, so this is not a free option
+  for most self-hosters.
 - **MusicBrainz** needs no account or credentials at all — a good fit if you do
-  not want to register a Spotify app. It returns title, album and year, but
-  rarely a genre (its search results do not include tags), and its public server
-  is often busy, so an occasional search may need a retry.
+  not have Spotify Premium or do not want to register a Spotify app. It returns
+  title, album and year, but rarely a genre (its search results do not include
+  tags), and its public server is often busy, so an occasional search may need a
+  retry.
 
 ---
 
