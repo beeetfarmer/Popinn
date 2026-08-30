@@ -152,6 +152,7 @@ export default function ProfilePage() {
   const [historyArtistSearch, setHistoryArtistSearch] = useState("");
   const [historyStartDate, setHistoryStartDate] = useState("");
   const [historyEndDate, setHistoryEndDate] = useState("");
+  const [profileTab, setProfileTab] = useState("stats");
   const [statsPreset, setStatsPreset] = useState<StatsRangePreset>("30d");
   const [statsGranularity, setStatsGranularity] = useState<StatsGranularity>("daily");
   const [topArtistMetric, setTopArtistMetric] = useState<TopArtistMetric>("views");
@@ -587,19 +588,18 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <Tabs defaultValue="stats" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="stats">Stats</TabsTrigger>
-            <TabsTrigger value="history">Playback History</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="stats" className="space-y-4">
-            <section className="rounded-xl border border-border bg-card p-4">
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="space-y-1">
+        <Tabs value={profileTab} onValueChange={setProfileTab} className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <TabsList>
+              <TabsTrigger value="stats">Stats</TabsTrigger>
+              <TabsTrigger value="history">Playback History</TabsTrigger>
+            </TabsList>
+            {profileTab === "stats" && (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <Label className="text-xs text-muted-foreground">Range</Label>
                   <Select value={statsPreset} onValueChange={(value) => setStatsPreset(value as StatsRangePreset)}>
-                    <SelectTrigger>
+                    <SelectTrigger className="h-8 w-[140px] border-0 bg-transparent">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -610,13 +610,13 @@ export default function ProfilePage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
                   <Label className="text-xs text-muted-foreground">View</Label>
                   <Select
                     value={statsGranularity}
                     onValueChange={(value) => setStatsGranularity(value as StatsGranularity)}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="h-8 w-[110px] border-0 bg-transparent">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -625,31 +625,26 @@ export default function ProfilePage() {
                     </SelectContent>
                   </Select>
                 </div>
-                {statsPreset === "custom" && (
-                  <>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Start Date</Label>
-                      <Input
-                        type="date"
-                        value={statsStart}
-                        onChange={(e) => setStatsStart(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">End Date</Label>
-                      <Input
-                        type="date"
-                        value={statsEnd}
-                        onChange={(e) => setStatsEnd(e.target.value)}
-                      />
-                    </div>
-                  </>
-                )}
               </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                Showing {shortDate(statsRange.start)} to {shortDate(statsRange.end)}
-              </p>
-            </section>
+            )}
+          </div>
+
+          <TabsContent value="stats" className="space-y-4">
+            {statsPreset === "custom" && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Start Date</Label>
+                  <Input type="date" value={statsStart} onChange={(e) => setStatsStart(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">End Date</Label>
+                  <Input type="date" value={statsEnd} onChange={(e) => setStatsEnd(e.target.value)} />
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Showing {shortDate(statsRange.start)} to {shortDate(statsRange.end)}
+            </p>
 
             <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-xl border border-border bg-card p-4">
