@@ -1095,7 +1095,7 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {/* Playback */}
           <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <h2 className="text-lg font-semibold text-foreground">Playback</h2>
+            <h2 className="text-lg font-semibold text-foreground">Playback &amp; Notifications</h2>
             <div className="flex items-center justify-between">
               <Label htmlFor="autoplay">Autoplay next video</Label>
               <Switch id="autoplay" checked={autoplay} onCheckedChange={setAutoplay} />
@@ -1132,11 +1132,6 @@ export default function SettingsPage() {
                 onCheckedChange={setHoverPreviewEnabled}
               />
             </div>
-          </section>
-
-          {/* Notifications */}
-          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <h2 className="text-lg font-semibold text-foreground">Notifications</h2>
             <div className="flex items-center justify-between">
               <Label htmlFor="notif">Enable notifications</Label>
               <Switch id="notif" checked={notifications} onCheckedChange={setNotifications} />
