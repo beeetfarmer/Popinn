@@ -51,8 +51,11 @@ interface RuntimeSettings {
   app_data_path: string;
   transcoding_enabled: boolean;
   view_threshold_percent: number;
+  library_scan_interval_minutes: number;
   lastfm_override_local_artist_images: boolean;
   video_infinite_scroll: boolean;
+  metadata_provider: "spotify" | "musicbrainz";
+  spotify_configured: boolean;
 }
 
 interface TranscodeRunStatus {
@@ -176,6 +179,9 @@ export default function SettingsPage() {
   const [lastfmOverrideLocalArtistImages, setLastfmOverrideLocalArtistImages] =
     useState(true);
   const [videoInfiniteScroll, setVideoInfiniteScroll] = useState(false);
+  const [libraryScanIntervalMinutes, setLibraryScanIntervalMinutes] = useState(0);
+  const [metadataProvider, setMetadataProvider] = useState<"spotify" | "musicbrainz">("spotify");
+  const [spotifyConfigured, setSpotifyConfigured] = useState(false);
   const [pendingDeleteUser, setPendingDeleteUser] = useState<UserItem | null>(null);
   const [cancelTranscodeOpen, setCancelTranscodeOpen] = useState(false);
 
@@ -213,6 +219,9 @@ export default function SettingsPage() {
       runtimeSettings.lastfm_override_local_artist_images
     );
     setVideoInfiniteScroll(runtimeSettings.video_infinite_scroll);
+    setLibraryScanIntervalMinutes(runtimeSettings.library_scan_interval_minutes);
+    setMetadataProvider(runtimeSettings.metadata_provider);
+    setSpotifyConfigured(runtimeSettings.spotify_configured);
   }, [runtimeSettings]);
 
   const runtimeMutation = useMutation({
@@ -224,6 +233,8 @@ export default function SettingsPage() {
         view_threshold_percent: viewThresholdPercent,
         lastfm_override_local_artist_images: lastfmOverrideLocalArtistImages,
         video_infinite_scroll: videoInfiniteScroll,
+        library_scan_interval_minutes: libraryScanIntervalMinutes,
+        metadata_provider: metadataProvider,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
@@ -867,6 +878,49 @@ export default function SettingsPage() {
                     onCheckedChange={setVideoInfiniteScroll}
                   />
                 </div>
+                <div className="space-y-1">
+                  <Label htmlFor="library-scan-interval">
+                    Automatic library scan interval (minutes)
+                  </Label>
+                  <Input
+                    id="library-scan-interval"
+                    type="number"
+                    min={0}
+                    max={10080}
+                    step={1}
+                    value={libraryScanIntervalMinutes}
+                    onChange={(e) =>
+                      setLibraryScanIntervalMinutes(
+                        Math.max(0, Math.min(10080, Number(e.target.value) || 0))
+                      )
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Rescan the media library automatically this often. Set to 0 to
+                    disable and scan only on demand.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="metadata-provider">Metadata search provider</Label>
+                  <select
+                    id="metadata-provider"
+                    value={metadataProvider}
+                    onChange={(e) =>
+                      setMetadataProvider(e.target.value === "musicbrainz" ? "musicbrainz" : "spotify")
+                    }
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                  >
+                    <option value="spotify" disabled={!spotifyConfigured}>
+                      Spotify{spotifyConfigured ? "" : " (credentials not configured)"}
+                    </option>
+                    <option value="musicbrainz">MusicBrainz (no account needed)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Source for the "Match metadata" search when editing videos. Spotify
+                    needs API credentials in the server config; MusicBrainz is free and
+                    needs none, but rarely returns a genre.
+                  </p>
+                </div>
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
@@ -1031,45 +1085,10 @@ export default function SettingsPage() {
           </section>
         )}
 
-        {isAdmin && (
-          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <h2 className="text-lg font-semibold text-foreground">Backup & Restore</h2>
-            <p className="text-sm text-muted-foreground">
-              Export and import settings plus playback history for migrations to another server with the same media files.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                onClick={() => exportMutation.mutate()}
-                disabled={exportMutation.isPending}
-              >
-                {exportMutation.isPending ? "Exporting..." : "Export Settings + History"}
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={importMutation.isPending}
-                onClick={() => document.getElementById("settings-import-file")?.click()}
-              >
-                {importMutation.isPending ? "Importing..." : "Import Settings + History"}
-              </Button>
-              <input
-                id="settings-import-file"
-                type="file"
-                accept="application/json,.json"
-                className="hidden"
-                onChange={(e) => {
-                  handleImportFile(e.target.files?.[0] || null);
-                  e.currentTarget.value = "";
-                }}
-              />
-            </div>
-          </section>
-        )}
-
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {/* Playback */}
           <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <h2 className="text-lg font-semibold text-foreground">Playback</h2>
+            <h2 className="text-lg font-semibold text-foreground">Playback &amp; Notifications</h2>
             <div className="flex items-center justify-between">
               <Label htmlFor="autoplay">Autoplay next video</Label>
               <Switch id="autoplay" checked={autoplay} onCheckedChange={setAutoplay} />
@@ -1106,16 +1125,47 @@ export default function SettingsPage() {
                 onCheckedChange={setHoverPreviewEnabled}
               />
             </div>
-          </section>
-
-          {/* Notifications */}
-          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <h2 className="text-lg font-semibold text-foreground">Notifications</h2>
             <div className="flex items-center justify-between">
               <Label htmlFor="notif">Enable notifications</Label>
               <Switch id="notif" checked={notifications} onCheckedChange={setNotifications} />
             </div>
           </section>
+
+          {/* Backup & Restore */}
+          {isAdmin && (
+            <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+              <h2 className="text-lg font-semibold text-foreground">Backup & Restore</h2>
+              <p className="text-sm text-muted-foreground">
+                Export and import settings plus playback history for migrations to another server with the same media files.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => exportMutation.mutate()}
+                  disabled={exportMutation.isPending}
+                >
+                  {exportMutation.isPending ? "Exporting..." : "Export Settings + History"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={importMutation.isPending}
+                  onClick={() => document.getElementById("settings-import-file")?.click()}
+                >
+                  {importMutation.isPending ? "Importing..." : "Import Settings + History"}
+                </Button>
+                <input
+                  id="settings-import-file"
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => {
+                    handleImportFile(e.target.files?.[0] || null);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </div>
+            </section>
+          )}
         </div>
 
         {/* Admin: User Management */}

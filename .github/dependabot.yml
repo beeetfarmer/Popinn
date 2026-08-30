@@ -26,12 +26,23 @@ updates:
       default-days: 7
     open-pull-requests-limit: 5
     ignore:
-      # TypeScript 7 is held back because typescript-eslint still declares
-      # `peer typescript ">=4.8.4 <6.1.0"`. With everything in one group, that
-      # single package made `npm ci` unresolvable and failed the whole PR --
-      # blocking 58 updates that were perfectly fine. Drop this once
-      # typescript-eslint supports 7.x.
-      - dependency-name: "typescript"
+      # Majors are excluded from the group entirely, because grouping and major
+      # bumps work against each other here. One shared lockfile means one PR,
+      # and a single package that cannot resolve or cannot build fails all of
+      # it: TypeScript 7 blocked 58 fine updates on a typescript-eslint peer
+      # range, and the next batch arrived carrying React 19, React Router 7,
+      # Tailwind 4 and Vite 8 at once -- four framework migrations, of which
+      # Tailwind 4 alone broke `npm run build` by moving its PostCSS plugin to
+      # a separate package. That PR also proposed React Router 7.18, which sits
+      # inside GHSA-qwww-vcr4-c8h2 (fixed in 8.3.0), so taking it would have
+      # moved us off an unaffected v6 and into the advisory.
+      #
+      # So majors are done deliberately, one at a time, with the gate green in
+      # between; this keeps the weekly PR to minor and patch, which is what
+      # grouping is actually good at. The cost is that a major no longer shows
+      # up as a PR -- check for them by hand now and then. Security alerts are
+      # unaffected and still appear under Security -> Dependabot.
+      - dependency-name: "*"
         update-types: ["version-update:semver-major"]
     groups:
       # One PR per ecosystem rather than one per package: the lockfile is

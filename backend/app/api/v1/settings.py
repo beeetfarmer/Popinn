@@ -31,17 +31,22 @@ from app.services.playback import is_counted_view
 from app.services.runtime_settings import (
     SETTING_APP_DATA_PATH,
     SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES,
+    SETTING_LIBRARY_SCAN_INTERVAL_MINUTES,
     SETTING_MEDIA_PATH,
+    SETTING_METADATA_PROVIDER,
     SETTING_TRANSCODING_ENABLED,
     SETTING_VIDEO_INFINITE_SCROLL,
     SETTING_VIEW_THRESHOLD_RATIO,
     get_effective_app_data_path,
     get_effective_lastfm_override_local_artist_images,
+    get_effective_library_scan_interval_minutes,
     get_effective_media_path,
+    get_effective_metadata_provider,
     get_effective_transcoding_enabled,
     get_effective_video_infinite_scroll,
     get_effective_view_threshold_ratio,
     set_setting_value,
+    spotify_configured,
 )
 from app.tasks.media import regenerate_all_thumbnails
 
@@ -53,6 +58,8 @@ EXPORTABLE_SETTING_KEYS = {
     SETTING_VIEW_THRESHOLD_RATIO,
     SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES,
     SETTING_VIDEO_INFINITE_SCROLL,
+    SETTING_LIBRARY_SCAN_INTERVAL_MINUTES,
+    SETTING_METADATA_PROVIDER,
 }
 
 
@@ -93,6 +100,9 @@ async def get_runtime_settings(
         view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
         lastfm_override_local_artist_images=await get_effective_lastfm_override_local_artist_images(db),
         video_infinite_scroll=await get_effective_video_infinite_scroll(db),
+        library_scan_interval_minutes=await get_effective_library_scan_interval_minutes(db),
+        metadata_provider=await get_effective_metadata_provider(db),
+        spotify_configured=spotify_configured(),
     )
 
 
@@ -167,6 +177,12 @@ async def update_runtime_settings(
         SETTING_VIDEO_INFINITE_SCROLL,
         "true" if body.video_infinite_scroll else "false",
     )
+    await set_setting_value(
+        db,
+        SETTING_LIBRARY_SCAN_INTERVAL_MINUTES,
+        str(body.library_scan_interval_minutes),
+    )
+    await set_setting_value(db, SETTING_METADATA_PROVIDER, body.metadata_provider)
     if abs(existing_threshold_ratio - threshold_ratio) > 1e-9:
         await db.execute(
             update(VideoPlay).values(
@@ -193,6 +209,9 @@ async def update_runtime_settings(
         view_threshold_percent=max(1, min(100, int(round(threshold_ratio * 100)))),
         lastfm_override_local_artist_images=body.lastfm_override_local_artist_images,
         video_infinite_scroll=body.video_infinite_scroll,
+        library_scan_interval_minutes=body.library_scan_interval_minutes,
+        metadata_provider=body.metadata_provider,
+        spotify_configured=spotify_configured(),
     )
 
 

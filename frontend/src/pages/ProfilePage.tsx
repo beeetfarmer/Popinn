@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
-import { User, Shield, Calendar, Upload, Pencil, Clock3, PlayCircle, Music2, Radio, LogOut } from "lucide-react";
+import { User, Shield, Calendar, Upload, Pencil, Clock3, PlayCircle, Music2, Radio, LogOut, Film } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -152,6 +152,7 @@ export default function ProfilePage() {
   const [historyArtistSearch, setHistoryArtistSearch] = useState("");
   const [historyStartDate, setHistoryStartDate] = useState("");
   const [historyEndDate, setHistoryEndDate] = useState("");
+  const [profileTab, setProfileTab] = useState("stats");
   const [statsPreset, setStatsPreset] = useState<StatsRangePreset>("30d");
   const [statsGranularity, setStatsGranularity] = useState<StatsGranularity>("daily");
   const [topArtistMetric, setTopArtistMetric] = useState<TopArtistMetric>("views");
@@ -171,6 +172,10 @@ export default function ProfilePage() {
   const { data: viewThreshold } = useQuery<ViewThresholdSettings>({
     queryKey: ["view-threshold"],
     queryFn: () => api.get("/settings/view-threshold"),
+  });
+  const { data: libraryTotal } = useQuery<{ total: number }>({
+    queryKey: ["library-video-total"],
+    queryFn: () => api.get("/videos/?limit=1"),
   });
   const viewThresholdPercent = viewThreshold?.view_threshold_percent ?? 20;
 
@@ -587,19 +592,18 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <Tabs defaultValue="stats" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="stats">Stats</TabsTrigger>
-            <TabsTrigger value="history">Playback History</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="stats" className="space-y-4">
-            <section className="rounded-xl border border-border bg-card p-4">
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="space-y-1">
+        <Tabs value={profileTab} onValueChange={setProfileTab} className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <TabsList>
+              <TabsTrigger value="stats">Stats</TabsTrigger>
+              <TabsTrigger value="history">Playback History</TabsTrigger>
+            </TabsList>
+            {profileTab === "stats" && (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <Label className="text-xs text-muted-foreground">Range</Label>
                   <Select value={statsPreset} onValueChange={(value) => setStatsPreset(value as StatsRangePreset)}>
-                    <SelectTrigger>
+                    <SelectTrigger className="h-8 w-[140px] border-0 bg-transparent">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -610,13 +614,13 @@ export default function ProfilePage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
                   <Label className="text-xs text-muted-foreground">View</Label>
                   <Select
                     value={statsGranularity}
                     onValueChange={(value) => setStatsGranularity(value as StatsGranularity)}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="h-8 w-[110px] border-0 bg-transparent">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -625,33 +629,35 @@ export default function ProfilePage() {
                     </SelectContent>
                   </Select>
                 </div>
-                {statsPreset === "custom" && (
-                  <>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Start Date</Label>
-                      <Input
-                        type="date"
-                        value={statsStart}
-                        onChange={(e) => setStatsStart(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">End Date</Label>
-                      <Input
-                        type="date"
-                        value={statsEnd}
-                        onChange={(e) => setStatsEnd(e.target.value)}
-                      />
-                    </div>
-                  </>
-                )}
               </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                Showing {shortDate(statsRange.start)} to {shortDate(statsRange.end)}
-              </p>
-            </section>
+            )}
+          </div>
 
-            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <TabsContent value="stats" className="space-y-4">
+            {statsPreset === "custom" && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Start Date</Label>
+                  <Input type="date" value={statsStart} onChange={(e) => setStatsStart(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">End Date</Label>
+                  <Input type="date" value={statsEnd} onChange={(e) => setStatsEnd(e.target.value)} />
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Showing {shortDate(statsRange.start)} to {shortDate(statsRange.end)}
+            </p>
+
+            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="rounded-xl border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Music Videos in Library</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <Film className="h-4 w-4 text-primary" />
+                  <p className="text-lg font-semibold text-foreground">{libraryTotal?.total ?? 0}</p>
+                </div>
+              </div>
               <div className="rounded-xl border border-border bg-card p-4">
                 <p className="text-xs text-muted-foreground">Total Watch Time</p>
                 <div className="mt-2 flex items-center gap-2">

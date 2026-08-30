@@ -36,9 +36,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_SETTINGS_IMPORT: str = "6/minute"
     SPOTIFY_API_RATE_LIMIT: str = "10/second"
     LASTFM_API_RATE_LIMIT: str = "5/second"
+    MUSICBRAINZ_API_RATE_LIMIT: str = "1/second"  # MusicBrainz throttles to ~1 req/s per IP
+    # The public MusicBrainz server frequently returns transient 503 "busy"
+    # even under quota, so retry it more persistently than other APIs.
+    MUSICBRAINZ_MAX_RETRIES: int = 4
     EXTERNAL_API_MAX_RETRIES: int = 2
     EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 0.5
     BACKGROUND_WORKERS: int = 2
+    LIBRARY_SCAN_INTERVAL_MINUTES: int = 0  # 0 disables the automatic periodic scan
     VIEW_THRESHOLD_RATIO: float = 0.2
     MAX_IMAGE_UPLOAD_BYTES: int = 5 * 1024 * 1024
     MAX_SETTINGS_IMPORT_BYTES: int = 10 * 1024 * 1024

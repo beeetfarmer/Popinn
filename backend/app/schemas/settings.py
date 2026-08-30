@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -23,6 +25,9 @@ class RuntimeSettingsRead(BaseModel):
     view_threshold_percent: int = Field(ge=1, le=100)
     lastfm_override_local_artist_images: bool
     video_infinite_scroll: bool = False
+    library_scan_interval_minutes: int = Field(0, ge=0, le=10080)
+    metadata_provider: Literal["spotify", "musicbrainz"] = "spotify"
+    spotify_configured: bool = False
 
 
 class RuntimeSettingsUpdate(BaseModel):
@@ -32,6 +37,8 @@ class RuntimeSettingsUpdate(BaseModel):
     view_threshold_percent: int = Field(ge=1, le=100)
     lastfm_override_local_artist_images: bool = True
     video_infinite_scroll: bool = False
+    library_scan_interval_minutes: int = Field(0, ge=0, le=10080)
+    metadata_provider: Literal["spotify", "musicbrainz"] = "spotify"
     model_config = ConfigDict(extra="forbid")
 
 

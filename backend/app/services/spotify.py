@@ -176,6 +176,9 @@ def _sanitize_query(query: str) -> str:
     # Remove common music video postfixes/noise phrases.
     for pattern in [
         r"\bofficial\s+music\s+video\b",
+        r"\bofficial\s+lyric\s+video\b",
+        r"\bofficial\s+video\b",
+        r"\bmusic\s+video\b",
         r"\bexclusive\s+performance\s+video\b",
         r"\bperformance\s+video\b",
         r"\bspecial\s+clip\b",
@@ -237,17 +240,22 @@ async def search_tracks(
 
         genres_by_artist_id: dict[str, str | None] = {}
         if artist_ids:
-            artists_data = await _request_json_with_retries(
-                client,
-                method="GET",
-                url=SPOTIFY_ARTISTS_URL,
-                params={"ids": ",".join(artist_ids[:50])},
-                headers=headers,
-                context="artist lookup",
-            )
-            for artist in artists_data.get("artists", []) or []:
-                genres = artist.get("genres") or []
-                genres_by_artist_id[artist.get("id")] = genres[0] if genres else None
+            # Genre is optional enrichment: Spotify may 403 the batch artists
+            # endpoint (restricted for some apps), so never let it fail the search.
+            try:
+                artists_data = await _request_json_with_retries(
+                    client,
+                    method="GET",
+                    url=SPOTIFY_ARTISTS_URL,
+                    params={"ids": ",".join(artist_ids[:50])},
+                    headers=headers,
+                    context="artist lookup",
+                )
+                for artist in artists_data.get("artists", []) or []:
+                    genres = artist.get("genres") or []
+                    genres_by_artist_id[artist.get("id")] = genres[0] if genres else None
+            except SpotifyServiceError as exc:
+                logger.warning("Spotify artist genre lookup failed, continuing without genres: %s", exc)
 
     results: list[dict] = []
     for track in tracks:

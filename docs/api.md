@@ -79,7 +79,7 @@ Endpoints marked **admin** require the `admin` role.
 | `POST` | `/videos/{video_id}/hls` | Queue an HLS transcode. Returns a job ID; the playlist appears at `/data/.hls/{video_id}/index.m3u8`. |
 | `POST` | `/videos/{video_id}/plays` | Record a play event — seconds watched and duration |
 | `GET` | `/videos/{video_id}/plays` | Play history for this video |
-| `GET` | `/videos/spotify/search` | Look up track metadata on Spotify |
+| `GET` | `/videos/spotify/search` | **admin** — look up track metadata via the active provider (Spotify or MusicBrainz; see `metadata_provider`). Path is kept as `spotify` for compatibility. |
 | `GET` | `/videos/transcode/status` | Transcode coverage for the library, plus any run in flight |
 | `POST` | `/videos/transcode/run` | **admin** — queue every video that still needs an HLS rendition. `409` if a run is already active. |
 

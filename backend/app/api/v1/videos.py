@@ -39,11 +39,16 @@ from app.services.playback import is_counted_view
 from app.services.runtime_settings import (
     get_effective_app_data_path,
     get_effective_media_path,
+    get_effective_metadata_provider,
     get_effective_transcoding_enabled,
     get_effective_view_threshold_ratio,
 )
 from app.services.stream_tokens import sign_stream_url_for_user
 from app.services.transcode_status import get_run, needs_transcode
+from app.services.musicbrainz import (
+    MusicBrainzServiceError,
+    search_tracks as musicbrainz_search_tracks,
+)
 from app.services.spotify import (
     SpotifyRateLimitError,
     SpotifyServiceError,
@@ -229,7 +234,19 @@ async def search_spotify_tracks(
     artist_name: str | None = Query(None, max_length=120),
     limit: int = Query(10, ge=1, le=20),
     _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
 ):
+    # Endpoint kept at /spotify/search for compatibility; the active provider is
+    # a runtime setting (Spotify by default, MusicBrainz for accountless setups).
+    if await get_effective_metadata_provider(db) == "musicbrainz":
+        try:
+            return await musicbrainz_search_tracks(query=q, artist_name=artist_name, limit=limit)
+        except MusicBrainzServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
+
     client_id = settings.SPOTIFY_CLIENT_ID.strip()
     client_secret = settings.SPOTIFY_CLIENT_SECRET.strip()
     if not client_id or not client_secret:

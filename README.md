@@ -6,8 +6,8 @@ watchlists, play history and in-browser playback with transcoding for formats
 your browser cannot handle natively.
 
 Popinn runs entirely on your own hardware. Nothing is uploaded anywhere, and the
-only outbound calls are the optional Last.fm and Spotify lookups used to enrich
-artist and track metadata.
+only outbound calls are the optional Last.fm, Spotify and MusicBrainz lookups
+used to enrich artist and track metadata.
 
 ---
 
@@ -42,7 +42,7 @@ artist and track metadata.
 **Metadata**
 
 - Artist biographies and images from Last.fm
-- Track metadata lookup via Spotify
+- Track metadata lookup via Spotify (needs a Premium subscription) or MusicBrainz (no account needed)
 - Manual overrides for everything, plus per-artist image upload
 
 **Organisation**

@@ -1,17 +1,17 @@
 name: Main Release
 
-# Push to main (including the auto-merge from dev-gate.yml) -> full
-# vulnerability suite re-run against the merged tree -> publish images.
-# Nothing reaches Docker Hub unless every scan job passes.
+# Push to main -> full vulnerability suite re-run against the merged tree ->
+# publish images. Nothing reaches Docker Hub unless every scan job passes.
 #
 # Two kinds of push land here:
 #   main         -> :edge and :<sha>, the rolling build
 #   tag v0.1.0   -> :0.1.0, :0.1 and :latest, a versioned release
 #
-# The rolling channel is :edge, not :latest, because dev-gate.yml auto-merges
-# dev into main -- so a push to main is every commit, not every release. Naming
-# that :latest would quietly break the one thing everyone assumes about it, and
-# the failure is silent: you pull mid-refactor and cannot tell why.
+# The rolling channel is :edge, not :latest. main is reached by merging a
+# promotion pull request from dev, which can carry several commits and is not
+# necessarily tagged, so a push to main is not the same thing as a release.
+# Naming that :latest would quietly break the one thing everyone assumes about
+# it, and the failure is silent: you pull an untagged build and cannot tell why.
 #
 # The git tag is the source of truth for the version; nothing is read from a
 # file, so a release is exactly `git tag v0.1.0 && git push origin v0.1.0`.
@@ -144,10 +144,10 @@ jobs:
           done
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
