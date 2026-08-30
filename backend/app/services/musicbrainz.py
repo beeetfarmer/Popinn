@@ -16,12 +16,16 @@ from app.core.rate_limit import rate_limiter
 from app.services.spotify import (
     _parse_retry_after_seconds,
     _parse_year,
-    _retry_attempts,
-    _retry_backoff_seconds,
     _sanitize_query,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _musicbrainz_backoff_seconds(attempt: int) -> float:
+    # Exponential, but capped so a single manual search never stalls for long.
+    base = max(0.1, float(settings.EXTERNAL_API_RETRY_BACKOFF_SECONDS))
+    return min(2.0, base * (2**attempt))
 
 MUSICBRAINZ_SEARCH_URL = "https://musicbrainz.org/ws/2/recording"
 # MusicBrainz rejects generic/absent User-Agents; identify the app + a contact.
@@ -61,35 +65,39 @@ async def search_tracks(
         return []
     params = {"query": lucene, "fmt": "json", "limit": max(1, min(limit, 20))}
     headers = {"User-Agent": _USER_AGENT}
+    attempts = max(1, settings.MUSICBRAINZ_MAX_RETRIES + 1)
 
     async with httpx.AsyncClient(timeout=15) as client:
-        for attempt in range(_retry_attempts()):
+        for attempt in range(attempts):
             # MusicBrainz throttles to ~1 request/second per IP, so pace globally
-            # (across all callers) before each try to avoid tripping its 503, and
-            # still retry if it throttles us anyway (e.g. a shared outbound IP).
+            # (across all callers) before each try to avoid tripping its 503.
             await rate_limiter.async_wait(
                 "musicbrainz_api", "global", settings.MUSICBRAINZ_API_RATE_LIMIT
             )
             try:
                 resp = await client.get(MUSICBRAINZ_SEARCH_URL, params=params, headers=headers)
             except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as exc:
-                if attempt < _retry_attempts() - 1:
-                    await asyncio.sleep(_retry_backoff_seconds(attempt))
+                if attempt < attempts - 1:
+                    await asyncio.sleep(_musicbrainz_backoff_seconds(attempt))
                     continue
                 raise MusicBrainzServiceError("MusicBrainz request failed due to network issues.") from exc
 
+            # The public server returns a transient 503 ("busy") often, even while
+            # we're under quota, so retry it persistently with a capped backoff.
             if resp.status_code == 503:
-                if attempt < _retry_attempts() - 1:
-                    delay = _parse_retry_after_seconds(resp) or _retry_backoff_seconds(attempt)
+                if attempt < attempts - 1:
+                    delay = _parse_retry_after_seconds(resp) or _musicbrainz_backoff_seconds(attempt)
                     logger.warning(
-                        "MusicBrainz throttled (503); retrying in %.1fs (%s/%s).",
+                        "MusicBrainz 503 (busy); retrying in %.1fs (%s/%s).",
                         delay,
                         attempt + 1,
-                        _retry_attempts(),
+                        attempts,
                     )
                     await asyncio.sleep(delay)
                     continue
-                raise MusicBrainzServiceError("MusicBrainz is rate limiting; please wait and try again.")
+                raise MusicBrainzServiceError(
+                    "MusicBrainz is busy right now. Please try the search again in a moment."
+                )
             if resp.status_code >= 400:
                 raise MusicBrainzServiceError(f"MusicBrainz rejected the request ({resp.status_code}).")
 
