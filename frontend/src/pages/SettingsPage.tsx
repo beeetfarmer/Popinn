@@ -1085,41 +1085,6 @@ export default function SettingsPage() {
           </section>
         )}
 
-        {isAdmin && (
-          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <h2 className="text-lg font-semibold text-foreground">Backup & Restore</h2>
-            <p className="text-sm text-muted-foreground">
-              Export and import settings plus playback history for migrations to another server with the same media files.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                onClick={() => exportMutation.mutate()}
-                disabled={exportMutation.isPending}
-              >
-                {exportMutation.isPending ? "Exporting..." : "Export Settings + History"}
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={importMutation.isPending}
-                onClick={() => document.getElementById("settings-import-file")?.click()}
-              >
-                {importMutation.isPending ? "Importing..." : "Import Settings + History"}
-              </Button>
-              <input
-                id="settings-import-file"
-                type="file"
-                accept="application/json,.json"
-                className="hidden"
-                onChange={(e) => {
-                  handleImportFile(e.target.files?.[0] || null);
-                  e.currentTarget.value = "";
-                }}
-              />
-            </div>
-          </section>
-        )}
-
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {/* Playback */}
           <section className="space-y-4 rounded-xl border border-border bg-card p-6">
@@ -1165,6 +1130,42 @@ export default function SettingsPage() {
               <Switch id="notif" checked={notifications} onCheckedChange={setNotifications} />
             </div>
           </section>
+
+          {/* Backup & Restore */}
+          {isAdmin && (
+            <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+              <h2 className="text-lg font-semibold text-foreground">Backup & Restore</h2>
+              <p className="text-sm text-muted-foreground">
+                Export and import settings plus playback history for migrations to another server with the same media files.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => exportMutation.mutate()}
+                  disabled={exportMutation.isPending}
+                >
+                  {exportMutation.isPending ? "Exporting..." : "Export Settings + History"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={importMutation.isPending}
+                  onClick={() => document.getElementById("settings-import-file")?.click()}
+                >
+                  {importMutation.isPending ? "Importing..." : "Import Settings + History"}
+                </Button>
+                <input
+                  id="settings-import-file"
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => {
+                    handleImportFile(e.target.files?.[0] || null);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </div>
+            </section>
+          )}
         </div>
 
         {/* Admin: User Management */}
