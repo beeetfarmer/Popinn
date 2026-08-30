@@ -474,7 +474,7 @@ export default function ArtistDetail() {
     if (!row) return;
     const query = row.spotifyQuery.trim() || row.title.trim();
     if (!query) {
-      toast.error("Enter a track name to search Spotify");
+      toast.error("Enter a track name to search");
       return;
     }
 
@@ -500,7 +500,7 @@ export default function ArtistDetail() {
         )
       );
       if (results.length === 0) {
-        toast.info(`No Spotify matches for "${query}"`);
+        toast.info(`No matches for "${query}"`);
       }
     } catch (error: unknown) {
       setMetadataRows((prev) =>
@@ -510,7 +510,7 @@ export default function ArtistDetail() {
             : item
         )
       );
-      toast.error(getErrorMessage(error, "Failed to search Spotify"));
+      toast.error(getErrorMessage(error, "Failed to search for metadata"));
     }
   }
 
@@ -529,7 +529,7 @@ export default function ArtistDetail() {
           : item
       )
     );
-    toast.success("Metadata fetched from Spotify");
+    toast.success("Metadata fetched");
   }
 
   async function saveMetadataChanges() {
@@ -629,7 +629,7 @@ export default function ArtistDetail() {
 
       toast.success(`Search all complete. Filled ${filledCount} video${filledCount !== 1 ? "s" : ""}.`);
       if (noMatchCount > 0) {
-        toast.info(`No Spotify match for ${noMatchCount} video${noMatchCount !== 1 ? "s" : ""}.`);
+        toast.info(`No match for ${noMatchCount} video${noMatchCount !== 1 ? "s" : ""}.`);
       }
     } finally {
       setSearchAllRunning(false);
@@ -1049,7 +1049,7 @@ export default function ArtistDetail() {
             ) : (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  Match each music video with a Spotify track to autofill title, album, release year, and genre.
+                  Match each music video with a track to autofill title, album, release year, and genre.
                 </p>
                 <div className="flex justify-end">
                   <Button
@@ -1071,7 +1071,7 @@ export default function ArtistDetail() {
                         <Input
                           value={row.spotifyQuery}
                           onChange={(e) => updateMetadataRow(row.videoId, "spotifyQuery", e.target.value)}
-                          placeholder="Search Spotify track..."
+                          placeholder="Search for a track..."
                         />
                         <Button
                           type="button"

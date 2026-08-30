@@ -54,6 +54,8 @@ interface RuntimeSettings {
   library_scan_interval_minutes: number;
   lastfm_override_local_artist_images: boolean;
   video_infinite_scroll: boolean;
+  metadata_provider: "spotify" | "musicbrainz";
+  spotify_configured: boolean;
 }
 
 interface TranscodeRunStatus {
@@ -178,6 +180,8 @@ export default function SettingsPage() {
     useState(true);
   const [videoInfiniteScroll, setVideoInfiniteScroll] = useState(false);
   const [libraryScanIntervalMinutes, setLibraryScanIntervalMinutes] = useState(0);
+  const [metadataProvider, setMetadataProvider] = useState<"spotify" | "musicbrainz">("spotify");
+  const [spotifyConfigured, setSpotifyConfigured] = useState(false);
   const [pendingDeleteUser, setPendingDeleteUser] = useState<UserItem | null>(null);
   const [cancelTranscodeOpen, setCancelTranscodeOpen] = useState(false);
 
@@ -216,6 +220,8 @@ export default function SettingsPage() {
     );
     setVideoInfiniteScroll(runtimeSettings.video_infinite_scroll);
     setLibraryScanIntervalMinutes(runtimeSettings.library_scan_interval_minutes);
+    setMetadataProvider(runtimeSettings.metadata_provider);
+    setSpotifyConfigured(runtimeSettings.spotify_configured);
   }, [runtimeSettings]);
 
   const runtimeMutation = useMutation({
@@ -228,6 +234,7 @@ export default function SettingsPage() {
         lastfm_override_local_artist_images: lastfmOverrideLocalArtistImages,
         video_infinite_scroll: videoInfiniteScroll,
         library_scan_interval_minutes: libraryScanIntervalMinutes,
+        metadata_provider: metadataProvider,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
@@ -891,6 +898,27 @@ export default function SettingsPage() {
                   <p className="text-xs text-muted-foreground">
                     Rescan the media library automatically this often. Set to 0 to
                     disable and scan only on demand.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="metadata-provider">Metadata search provider</Label>
+                  <select
+                    id="metadata-provider"
+                    value={metadataProvider}
+                    onChange={(e) =>
+                      setMetadataProvider(e.target.value === "musicbrainz" ? "musicbrainz" : "spotify")
+                    }
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                  >
+                    <option value="spotify" disabled={!spotifyConfigured}>
+                      Spotify{spotifyConfigured ? "" : " (credentials not configured)"}
+                    </option>
+                    <option value="musicbrainz">MusicBrainz (no account needed)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Source for the "Match metadata" search when editing videos. Spotify
+                    needs API credentials in the server config; MusicBrainz is free and
+                    needs none, but rarely returns a genre.
                   </p>
                 </div>
                 <div className="flex gap-2">

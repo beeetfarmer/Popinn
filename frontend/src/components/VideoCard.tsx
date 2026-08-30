@@ -195,7 +195,7 @@ export default function VideoCard({ video }: VideoCardProps) {
   async function searchSpotify() {
     const q = spotifyQuery.trim();
     if (!q) {
-      toast.error("Enter a track name to search Spotify");
+      toast.error("Enter a track name to search");
       return;
     }
     setSpotifySearching(true);
@@ -205,10 +205,10 @@ export default function VideoCard({ video }: VideoCardProps) {
       );
       setSpotifyResults(res);
       if (res.length === 0) {
-        toast.info("No Spotify matches found");
+        toast.info("No metadata matches found");
       }
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error, "Failed to search Spotify"));
+      toast.error(getErrorMessage(error, "Failed to search for metadata"));
     } finally {
       setSpotifySearching(false);
     }
@@ -220,7 +220,7 @@ export default function VideoCard({ video }: VideoCardProps) {
     setEditYear(match.year ? String(match.year) : "");
     setEditGenre(match.genre || "");
     setSpotifyQuery(match.title || spotifyQuery);
-    toast.success("Metadata fetched from Spotify");
+    toast.success("Metadata fetched");
   }
 
   return (
@@ -341,12 +341,12 @@ export default function VideoCard({ video }: VideoCardProps) {
           </DialogHeader>
           <div className="space-y-3">
             <div className="rounded-md border border-border p-3">
-              <label className="mb-1 block text-sm font-medium text-foreground">Match from Spotify</label>
+              <label className="mb-1 block text-sm font-medium text-foreground">Match metadata</label>
               <div className="flex gap-2">
                 <Input
                   value={spotifyQuery}
                   onChange={(e) => setSpotifyQuery(e.target.value)}
-                  placeholder="Search Spotify track..."
+                  placeholder="Search for a track..."
                 />
                 <Button
                   variant="secondary"

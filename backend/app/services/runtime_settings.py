@@ -12,6 +12,13 @@ SETTING_VIEW_THRESHOLD_RATIO = "view_threshold_ratio"
 SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES = "lastfm_override_local_artist_images"
 SETTING_VIDEO_INFINITE_SCROLL = "video_infinite_scroll"
 SETTING_LIBRARY_SCAN_INTERVAL_MINUTES = "library_scan_interval_minutes"
+SETTING_METADATA_PROVIDER = "metadata_provider"
+
+METADATA_PROVIDERS = ("spotify", "musicbrainz")
+
+
+def spotify_configured() -> bool:
+    return bool(settings.SPOTIFY_CLIENT_ID.strip() and settings.SPOTIFY_CLIENT_SECRET.strip())
 
 
 def _to_bool(value: str | None, default: bool = False) -> bool:
@@ -106,6 +113,14 @@ async def get_effective_library_scan_interval_minutes(db: AsyncSession) -> int:
         return max(0, int(value))
     except (TypeError, ValueError):
         return default
+
+
+async def get_effective_metadata_provider(db: AsyncSession) -> str:
+    """Which service backs metadata search. Defaults to Spotify when its
+    credentials are configured, otherwise MusicBrainz (which needs no account)."""
+    default = "spotify" if spotify_configured() else "musicbrainz"
+    value = await get_setting_value(db, SETTING_METADATA_PROVIDER, default)
+    return value if value in METADATA_PROVIDERS else default
 
 
 def get_setting_value_sync(
