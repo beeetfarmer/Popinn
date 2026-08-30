@@ -8,6 +8,7 @@ for at most ~1 request/second; a single search here is one request.
 
 import asyncio
 import logging
+import re
 
 import httpx
 
@@ -36,21 +37,33 @@ class MusicBrainzServiceError(RuntimeError):
     pass
 
 
-def _lucene_escape(value: str) -> str:
-    # Drop the quote/backslash chars that would break the phrase we wrap it in.
-    return value.replace("\\", " ").replace('"', " ").strip()
+# Slash look-alikes real filenames use in "M/V" (⧸ U+29F8, ／ U+FF0F, ∕ U+2215)
+# so _sanitize_query's m/v stripper actually fires on them.
+_SLASH_LOOKALIKES = str.maketrans({"⧸": "/", "／": "/", "∕": "/"})
+# Lucene operator characters. Left in an unquoted query they change its meaning
+# (a bare "-" before a word is NOT, excluding it), so strip them to spaces.
+_LUCENE_SPECIALS = re.compile(r'[+\-&|!(){}\[\]^"~*?:\\/]')
+
+
+def _clean_terms(value: str) -> str:
+    cleaned = _sanitize_query(value.translate(_SLASH_LOOKALIKES))
+    cleaned = _LUCENE_SPECIALS.sub(" ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _build_query(query: str, artist_name: str | None) -> str:
-    title = _sanitize_query(query.strip()) or query.strip()
-    title = _lucene_escape(title)
+    # Unquoted field groups (OR-scored) match far better than an exact phrase on
+    # noisy real-world titles (embedded artist names, MV tags, CJK). The artist
+    # group stays ANDed: a title-only match often returns a different artist's
+    # song, which would autofill wrong metadata.
+    title = _clean_terms(query.strip())
     parts: list[str] = []
     if title:
-        parts.append(f'recording:"{title}"')
+        parts.append(f"recording:({title})")
     if artist_name and artist_name.strip():
-        artist = _lucene_escape(artist_name)
+        artist = _clean_terms(artist_name)
         if artist:
-            parts.append(f'artist:"{artist}"')
+            parts.append(f"artist:({artist})")
     return " AND ".join(parts)
 
 
@@ -137,8 +150,11 @@ def _recordings_to_results(data: dict) -> list[dict]:
 
 
 if __name__ == "__main__":  # pragma: no cover - smallest self-check
-    assert _build_query("Hello (Official Video)", "Adele") == 'recording:"Hello" AND artist:"Adele"'
-    assert _build_query('a "quoted" title', None) == 'recording:"a quoted title"'
+    assert _build_query("Hello (Official Video)", "Adele") == "recording:(Hello) AND artist:(Adele)"
+    assert _build_query('a "quoted" title', None) == "recording:(a quoted title)"
+    # U+29F8 "M⧸V" must be stripped; a bare "-" (Lucene NOT) must not survive.
+    assert _build_query("'DRIP' M⧸V", "BABYMONSTER") == "recording:(DRIP) AND artist:(BABYMONSTER)"
+    assert _build_query("화사 (Hwa Sa) - LMM", "HWASA") == "recording:(화사 Hwa Sa LMM) AND artist:(HWASA)"
     sample = {
         "recordings": [
             {
