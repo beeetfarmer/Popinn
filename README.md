@@ -42,7 +42,7 @@ used to enrich artist and track metadata.
 **Metadata**
 
 - Artist biographies and images from Last.fm
-- Track metadata lookup via Spotify (needs a Premium subscription — see below) or MusicBrainz (no account needed)
+- Track metadata lookup via Spotify (needs a Premium subscription) or MusicBrainz (no account needed)
 - Manual overrides for everything, plus per-artist image upload
 
 **Organisation**
