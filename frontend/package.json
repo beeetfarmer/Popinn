@@ -58,7 +58,7 @@
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.61.1",
     "react-resizable-panels": "^2.1.9",
-    "react-router-dom": "^6.30.4",
+    "react-router-dom": "^7.18.2",
     "recharts": "^2.15.4",
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.6.0",
@@ -91,7 +91,7 @@
   "overrides": {
     "@babel/core": "7.29.6",
     "ajv": "6.14.0",
-    "brace-expansion": "5.0.8",
+    "brace-expansion": "5.0.9",
     "esbuild": "0.25.0",
     "flatted": "3.4.3",
     "form-data": "4.0.6",
