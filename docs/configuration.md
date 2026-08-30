@@ -135,16 +135,19 @@ All values use the form `<count>/<period>`, for example `45/minute`.
 Counters are stored in the database rather than in process memory, so limits
 hold across restarts and across multiple backend replicas.
 
-Separately, `SPOTIFY_API_RATE_LIMIT` (`10/second`) and `LASTFM_API_RATE_LIMIT`
-(`5/second`) throttle Popinn's *outbound* calls so you do not get banned by
-those services. `EXTERNAL_API_MAX_RETRIES` (`2`) and
-`EXTERNAL_API_RETRY_BACKOFF_SECONDS` (`0.5`) control retries.
+Separately, `SPOTIFY_API_RATE_LIMIT` (`10/second`), `LASTFM_API_RATE_LIMIT`
+(`5/second`) and `MUSICBRAINZ_API_RATE_LIMIT` (`1/second`) throttle Popinn's
+*outbound* calls so you do not get banned by those services. `EXTERNAL_API_MAX_RETRIES`
+(`2`) and `EXTERNAL_API_RETRY_BACKOFF_SECONDS` (`0.5`) control retries for Spotify
+and Last.fm; MusicBrainz uses its own `MUSICBRAINZ_MAX_RETRIES` (`4`) because its
+public server frequently returns transient "busy" 503s even when you are under
+quota.
 
 ---
 
 ## External metadata
 
-Both integrations are optional; Popinn works fine without them, you just get no
+All integrations are optional; Popinn works fine without them, you just get no
 artist biographies or artwork.
 
 | Variable | Description |
@@ -152,7 +155,21 @@ artist biographies or artwork.
 | `LASTFM_API_KEY` | Artist biographies and images. Free key from <https://www.last.fm/api/account/create>. |
 | `LASTFM_CACHE_TTL_HOURS` | How long artist metadata is cached before it is eligible for refresh. Default `168` (one week). |
 | `SPOTIFY_CLIENT_ID` | Track metadata lookup |
-| `SPOTIFY_CLIENT_SECRET` | Track metadata lookup. Credentials from <https://developer.spotify.com/dashboard>. |
+| `SPOTIFY_CLIENT_SECRET` | Track metadata lookup. Credentials from <https://developer.spotify.com/dashboard> (a free developer app — no paid Spotify subscription required). |
+
+### Track metadata provider
+
+Track metadata lookup (the "Match metadata" search when editing a video) can use
+either **Spotify** or **MusicBrainz**, chosen under **Settings → Library Runtime
+Settings → Metadata search provider**. The default is Spotify when its
+credentials are set, otherwise MusicBrainz.
+
+- **Spotify** needs the credentials above and returns title, album, year and
+  genre.
+- **MusicBrainz** needs no account or credentials at all — a good fit if you do
+  not want to register a Spotify app. It returns title, album and year, but
+  rarely a genre (its search results do not include tags), and its public server
+  is often busy, so an occasional search may need a retry.
 
 ---
 
@@ -190,6 +207,8 @@ apply immediately, with no restart.
 | `app_data_path` | Overrides the app-data path. Same restriction. |
 | `view_threshold_ratio` | Overrides `VIEW_THRESHOLD_RATIO` |
 | `lastfm_override_local_artist_images` | Whether fetched Last.fm artwork replaces images you uploaded yourself |
+| `metadata_provider` | Which service backs track metadata search: `spotify` or `musicbrainz`. Defaults to Spotify when its credentials are configured, otherwise MusicBrainz. |
+| `library_scan_interval_minutes` | Minutes between automatic library scans (`0` disables it). Overrides `LIBRARY_SCAN_INTERVAL_MINUTES`. |
 
 On a brand-new install the settings table is empty, which means transcoding is
 off. If MKV files load but never play, that is almost always why — turn on

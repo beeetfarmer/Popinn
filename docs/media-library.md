@@ -131,8 +131,10 @@ and a running scan can be cancelled.
 
 ## Rescanning
 
-Rescanning is incremental and safe to run as often as you like. Videos are
-matched by file path, so:
+Rescanning is incremental and safe to run as often as you like. Run one manually
+from **Settings → Scan Library**, or have Popinn rescan on a schedule by setting
+**Automatic library scan interval** in Settings (or `LIBRARY_SCAN_INTERVAL_MINUTES`;
+`0` disables it). Videos are matched by file path, so:
 
 - **New files** are added
 - **Unchanged files** are left alone, with metadata edits preserved
