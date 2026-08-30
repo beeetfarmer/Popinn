@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
-import { User, Shield, Calendar, Upload, Pencil, Clock3, PlayCircle, Music2, Radio, LogOut } from "lucide-react";
+import { User, Shield, Calendar, Upload, Pencil, Clock3, PlayCircle, Music2, Radio, LogOut, Film } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -172,6 +172,10 @@ export default function ProfilePage() {
   const { data: viewThreshold } = useQuery<ViewThresholdSettings>({
     queryKey: ["view-threshold"],
     queryFn: () => api.get("/settings/view-threshold"),
+  });
+  const { data: libraryTotal } = useQuery<{ total: number }>({
+    queryKey: ["library-video-total"],
+    queryFn: () => api.get("/videos/?limit=1"),
   });
   const viewThresholdPercent = viewThreshold?.view_threshold_percent ?? 20;
 
@@ -646,7 +650,14 @@ export default function ProfilePage() {
               Showing {shortDate(statsRange.start)} to {shortDate(statsRange.end)}
             </p>
 
-            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="rounded-xl border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Music Videos in Library</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <Film className="h-4 w-4 text-primary" />
+                  <p className="text-lg font-semibold text-foreground">{libraryTotal?.total ?? 0}</p>
+                </div>
+              </div>
               <div className="rounded-xl border border-border bg-card p-4">
                 <p className="text-xs text-muted-foreground">Total Watch Time</p>
                 <div className="mt-2 flex items-center gap-2">
