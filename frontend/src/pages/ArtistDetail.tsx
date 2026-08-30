@@ -186,6 +186,14 @@ export default function ArtistDetail() {
   });
   const infiniteScroll = browsing?.video_infinite_scroll ?? false;
 
+  // MusicBrainz asks for ~1 request/second, so "Search All" must pace itself
+  // when it's the active provider; Spotify tolerates the concurrent burst.
+  const { data: metadataRuntime } = useQuery<{ metadata_provider: "spotify" | "musicbrainz" }>({
+    queryKey: ["runtime-metadata-provider"],
+    queryFn: () => api.get("/settings/runtime"),
+    enabled: isAdmin,
+  });
+
   // How many cards are mounted, kept per history entry so returning from a video
   // shows the same stretch of the list rather than snapping back to the first
   // chunk. Scroll position alone is not enough: without the count the page is
@@ -581,22 +589,34 @@ export default function ArtistDetail() {
     setMetadataRows((prev) => prev.map((row) => ({ ...row, spotifySearching: true })));
 
     try {
-      const resultsByVideoId = await Promise.all(
-        metadataRows.map(async (row) => {
-          const query = row.spotifyQuery.trim() || row.title.trim();
-          if (!query) {
-            return { videoId: row.videoId, results: [] as SpotifyTrackMatch[] };
-          }
-          try {
-            const results = await api.get<SpotifyTrackMatch[]>(
-              `/videos/spotify/search?q=${encodeURIComponent(query)}&artist_name=${encodeURIComponent(artist.name)}&limit=8`
-            );
-            return { videoId: row.videoId, results };
-          } catch {
-            return { videoId: row.videoId, results: [] as SpotifyTrackMatch[] };
-          }
-        })
-      );
+      // MusicBrainz is rate-limited, so run its searches one at a time with a
+      // pause between them; Spotify keeps the faster concurrent fan-out.
+      const paced = metadataRuntime?.metadata_provider === "musicbrainz";
+      const searchRow = async (row: MetadataRow) => {
+        const query = row.spotifyQuery.trim() || row.title.trim();
+        if (!query) {
+          return { videoId: row.videoId, results: [] as SpotifyTrackMatch[] };
+        }
+        try {
+          const results = await api.get<SpotifyTrackMatch[]>(
+            `/videos/spotify/search?q=${encodeURIComponent(query)}&artist_name=${encodeURIComponent(artist.name)}&limit=8`
+          );
+          return { videoId: row.videoId, results };
+        } catch {
+          return { videoId: row.videoId, results: [] as SpotifyTrackMatch[] };
+        }
+      };
+
+      let resultsByVideoId: { videoId: string; results: SpotifyTrackMatch[] }[];
+      if (paced) {
+        resultsByVideoId = [];
+        for (let i = 0; i < metadataRows.length; i += 1) {
+          if (i > 0) await new Promise((resolve) => setTimeout(resolve, 1100));
+          resultsByVideoId.push(await searchRow(metadataRows[i]));
+        }
+      } else {
+        resultsByVideoId = await Promise.all(metadataRows.map(searchRow));
+      }
 
       const resultMap = new Map(resultsByVideoId.map((item) => [item.videoId, item.results]));
       const updatedRows = metadataRows.map((row) => {
