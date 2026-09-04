@@ -121,10 +121,19 @@ def _video_to_read(
     app_data_root: str,
     transcoding_enabled: bool,
     user_id: uuid.UUID | None = None,
+    resolve_hls: bool = True,
 ) -> VideoRead:
     video_url = _asset_url(video.file_path, media_root, app_data_root, user_id)
+    # Resolving the HLS playlist reads it off disk (open+seek+read+stat). That is
+    # fine for a single video, but done per row in a list it is N synchronous
+    # disk reads on the event loop -- which, on a single uvicorn worker, blocks
+    # every other request and is what makes list views hang under load. List
+    # callers pass resolve_hls=False; the player refetches /videos/{id} for the
+    # real URL, so the grid never needs it.
     hls_url = (
-        _hls_playlist_url(video.id, app_data_root, user_id) if transcoding_enabled else None
+        _hls_playlist_url(video.id, app_data_root, user_id)
+        if transcoding_enabled and resolve_hls
+        else None
     )
     return VideoRead(
         id=video.id,
@@ -209,7 +218,6 @@ async def list_videos(
     videos = result.scalars().all()
     media_root = await get_effective_media_path(db)
     app_data_root = await get_effective_app_data_path(db)
-    transcoding_enabled = await get_effective_transcoding_enabled(db)
     return VideoPage(
         items=[
             _video_to_read(
@@ -217,8 +225,9 @@ async def list_videos(
                 v.artist.name if v.artist else "",
                 media_root,
                 app_data_root,
-                transcoding_enabled,
-                _user.id,
+                transcoding_enabled=False,
+                user_id=_user.id,
+                resolve_hls=False,
             )
             for v in videos
         ],
@@ -386,7 +395,6 @@ async def get_video_recommendations(
     page = matched[offset : offset + limit]
     media_root = await get_effective_media_path(db)
     app_data_root = await get_effective_app_data_path(db)
-    transcoding_enabled = await get_effective_transcoding_enabled(db)
 
     items = [
         VideoRecommendationRead(
@@ -395,8 +403,9 @@ async def get_video_recommendations(
                 row.artist.name if row.artist else "",
                 media_root,
                 app_data_root,
-                transcoding_enabled,
-                _user.id,
+                transcoding_enabled=False,
+                user_id=_user.id,
+                resolve_hls=False,
             ),
             lastfm_match=score,
         )
@@ -558,18 +567,27 @@ async def get_transcode_status(
 
     result = await db.execute(select(Video).where(Video.deleted_at.is_(None)))
     videos = result.scalars().all()
+    rows = [(video.id, video.file_path) for video in videos]
 
-    needs_total = 0
-    transcoded = 0
-    for video in videos:
-        if not needs_transcode(video.file_path):
-            continue
-        needs_total += 1
-        playlist = (
-            Path(app_data_root) / settings.HLS_DIR / str(video.id) / "index.m3u8"
-        )
-        if playlist_is_complete(playlist):
-            transcoded += 1
+    # This scans a playlist file per video off disk. The settings page polls this
+    # every 2s while a run is active -- exactly when disk I/O is heaviest -- so
+    # running the loop inline would block the single worker's event loop and hang
+    # every other request. Off the loop it cannot.
+    def _count() -> tuple[int, int]:
+        needs = 0
+        done = 0
+        for video_id, file_path in rows:
+            if not needs_transcode(file_path):
+                continue
+            needs += 1
+            playlist = (
+                Path(app_data_root) / settings.HLS_DIR / str(video_id) / "index.m3u8"
+            )
+            if playlist_is_complete(playlist):
+                done += 1
+        return needs, done
+
+    needs_total, transcoded = await asyncio.to_thread(_count)
 
     run = get_run().snapshot()
     return TranscodeStatus(
