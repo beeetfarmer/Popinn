@@ -174,6 +174,7 @@ export default function MusicVideosPage() {
     ? scrollQuery.isLoading
     : pagedQuery.isLoading;
   const videosError = infiniteScroll ? scrollQuery.isError : pagedQuery.isError;
+  const hasItems = visible.length > 0;
 
   useScrollRestoration(visible.length > 0);
 
@@ -397,10 +398,12 @@ export default function MusicVideosPage() {
         {videosLoading && (
           <p className="py-8 text-center text-muted-foreground">Loading videos...</p>
         )}
-        {videosError && (
+        {/* A later infinite-scroll page failing must not blank the videos already
+            on screen -- only report the error when nothing has loaded at all. */}
+        {videosError && !hasItems && (
           <p className="py-8 text-center text-destructive">Failed to load videos</p>
         )}
-        {!videosLoading && !videosError && (
+        {hasItems && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {visible.map((v) => (
             <div key={v.id} className="relative">
@@ -431,15 +434,25 @@ export default function MusicVideosPage() {
 
         {/* Infinite scroll: sentinel plus a live count, so it is clear whether
             more is coming or the end has been reached. */}
-        {infiniteScroll && !videosError && total > 0 && (
+        {infiniteScroll && total > 0 && hasItems && (
           <>
             <div ref={sentinelRef} aria-hidden className="h-px" />
             <div className="mt-8 text-center text-sm text-muted-foreground">
-              {isFetchingNextPage
-                ? "Loading more..."
-                : hasNextPage
-                  ? `Showing ${visible.length} of ${total}`
-                  : `All ${total} videos loaded`}
+              {isFetchingNextPage ? (
+                "Loading more..."
+              ) : videosError ? (
+                <button
+                  type="button"
+                  onClick={() => fetchNextPage()}
+                  className="text-primary underline underline-offset-4"
+                >
+                  Couldn't load more videos — tap to retry
+                </button>
+              ) : hasNextPage ? (
+                `Showing ${visible.length} of ${total}`
+              ) : (
+                `All ${total} videos loaded`
+              )}
             </div>
           </>
         )}
