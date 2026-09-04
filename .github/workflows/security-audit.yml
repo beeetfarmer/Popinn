@@ -181,6 +181,11 @@ jobs:
           path: .
           format: cyclonedx-json
           output-file: popinn-sbom.cdx.json
+          # On a tag ref this action otherwise tries to attach the SBOM to the
+          # release, which needs contents:write; this workflow is read-only, so
+          # that call 403s and fails the gate (blocking the tagged image
+          # publish). The SBOM is kept as a build artifact below instead.
+          upload-release-assets: false
 
       - name: Upload SBOM Artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
