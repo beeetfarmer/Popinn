@@ -587,7 +587,10 @@ export default function SettingsPage() {
   return (
     <PageTransition>
       <div className="mx-auto max-w-2xl space-y-8">
-        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+        <div className="flex items-baseline justify-between gap-3">
+          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+          <span className="text-xs text-muted-foreground">v{__APP_VERSION__}</span>
+        </div>
 
         {/* Library Scan */}
         {isAdmin && (
