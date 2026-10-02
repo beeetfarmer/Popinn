@@ -5,6 +5,9 @@ import { api } from "@/lib/api";
 import type { MusicVideo } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import PageTransition from "@/components/PageTransition";
+import { Skeleton } from "@/components/ui/skeleton";
+import { VideoGridSkeleton } from "@/components/Skeletons";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -67,6 +70,9 @@ export default function WatchlistDetail() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["watchlist", id] });
+      // The overview's count and cover would otherwise stay stale.
+      queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      queryClient.invalidateQueries({ queryKey: ["watchlist-preview", id] });
       toast.success("Video removed");
     },
     onError: (_error, _videoId, context) => {
@@ -118,72 +124,97 @@ export default function WatchlistDetail() {
   }
 
   if (isLoading) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    return (
+      <div className="space-y-10 pt-8">
+        <Skeleton className="h-14 w-72 rounded-xl" />
+        <VideoGridSkeleton count={10} />
+      </div>
+    );
   }
 
   if (!watchlist) {
-    return <p className="text-muted-foreground">Watchlist not found</p>;
+    return <p className="py-24 text-center text-muted-foreground">Watchlist not found</p>;
   }
+
+  const backdrop = watchlist.videos[0]?.thumbnail_url;
 
   return (
     <PageTransition>
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate("/watchlists")}
-            className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-foreground">{watchlist.name}</h1>
-              <button
-                onClick={() => {
-                  setEditName(watchlist.name);
-                  setEditOpen(true);
-                }}
-                className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                title="Rename watchlist"
-              >
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => {
-                  setDeleteWatchlistOpen(true);
-                }}
-                className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                title="Delete watchlist"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {watchlist.item_count} video{watchlist.item_count !== 1 ? "s" : ""}
-            </p>
-            <div className="mt-2 flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => startWatchlistQueue(false)}>
-                <Play className="mr-1 h-4 w-4" /> Play All
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => startWatchlistQueue(true)}>
-                <Shuffle className="mr-1 h-4 w-4" /> Shuffle
-              </Button>
-            </div>
+      <div className="space-y-10">
+        <section className="relative -mt-4 ml-[calc(50%-50vw)] mr-[calc(50%-50vw)] overflow-hidden sm:-mt-6">
+          {backdrop && (
+            <img
+              src={backdrop}
+              alt=""
+              aria-hidden
+              className="absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-3xl"
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-b from-background/40 via-background/70 to-background" />
+          <div className="relative mx-auto max-w-[1800px] px-4 pb-10 pt-8 sm:px-8 sm:pt-12">
+            <button
+              onClick={() => navigate("/watchlists")}
+              className="glass mb-8 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" /> Watchlists
+            </button>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <p className="eyebrow mb-3">Watchlist</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="display text-5xl text-foreground sm:text-7xl">{watchlist.name}</h1>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => {
+                      setEditName(watchlist.name);
+                      setEditOpen(true);
+                    }}
+                    className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                    title="Rename watchlist"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDeleteWatchlistOpen(true);
+                    }}
+                    className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    title="Delete watchlist"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {watchlist.item_count} video{watchlist.item_count !== 1 ? "s" : ""}
+              </p>
+              <div className="mt-6 flex gap-2">
+                <Button size="lg" onClick={() => startWatchlistQueue(false)}>
+                  <Play className="h-4 w-4 fill-current" /> Play all
+                </Button>
+                <Button size="lg" variant="outline" onClick={() => startWatchlistQueue(true)}>
+                  <Shuffle className="h-4 w-4" /> Shuffle
+                </Button>
+              </div>
+            </motion.div>
           </div>
-        </div>
+        </section>
 
         {watchlist.videos.length === 0 ? (
-          <p className="py-12 text-center text-muted-foreground">
+          <p className="py-16 text-center text-muted-foreground">
             No videos in this watchlist yet
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
             {watchlist.videos.map((v) => (
-              <div key={v.id} className="relative">
+              <div key={v.id} className="group/item relative">
                 <VideoCard video={v} />
                 <button
                   onClick={() => removeVideoMutation.mutate(v.id)}
-                  className="absolute right-1 top-1 rounded-full bg-background/80 p-1.5 text-destructive opacity-0 transition-opacity hover:bg-destructive hover:text-destructive-foreground group-hover:opacity-100 [div:hover>&]:opacity-100"
+                  className="absolute left-2 top-2 rounded-full bg-black/60 p-2 text-white/80 opacity-0 backdrop-blur-md transition-all hover:bg-destructive hover:text-destructive-foreground group-hover/item:opacity-100 [@media(hover:none)]:opacity-100"
                   title="Remove from watchlist"
                 >
                   <Trash2 className="h-3.5 w-3.5" />

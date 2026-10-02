@@ -16,8 +16,9 @@ used to enrich artist and track metadata.
 
 | | |
 | --- | --- |
-| ![](docs/images/1.png) | ![](docs/images/2.png) |
-| ![](docs/images/3.png) | ![](docs/images/4.png) |
+| ![Home](docs/images/home.webp)<br>**Home** | ![Music videos](docs/images/videos.webp)<br>**Music videos** |
+| ![Artists](docs/images/artists.webp)<br>**Artists** | ![Watchlists](docs/images/watchlists.webp)<br>**Watchlists** |
+| ![Settings](docs/images/settings.webp)<br>**Settings** | ![Profile](docs/images/profile.webp)<br>**Profile & stats** |
 
 ---
 

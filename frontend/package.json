@@ -2,7 +2,7 @@
   "name": "popinn-frontend",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,6 +14,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource/instrument-serif": "^5.3.0",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-alert-dialog": "^1.1.14",
@@ -86,12 +88,12 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1-alpha.3",
     "vite": "^6.4.3",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "@babel/core": "7.29.6",
     "ajv": "6.14.0",
-    "brace-expansion": "5.0.9",
+    "brace-expansion": "5.0.12",
     "esbuild": "0.25.0",
     "flatted": "3.4.3",
     "form-data": "4.0.6",
@@ -112,6 +114,7 @@
     },
     "readdirp": {
       "picomatch": "2.3.2"
-    }
+    },
+    "undici": "8.11.2"
   }
 }

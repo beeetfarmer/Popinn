@@ -24,6 +24,7 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import PageTransition from "@/components/PageTransition";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
 import type { MusicVideo } from "@/data/mockData";
 
@@ -137,7 +138,7 @@ const playsChartConfig = {
 } satisfies ChartConfig;
 
 const watchChartConfig = {
-  watch_minutes: { label: "Watch Minutes", color: "#22c55e" },
+  watch_minutes: { label: "Watch Minutes", color: "hsl(var(--primary) / 0.65)" },
 } satisfies ChartConfig;
 
 export default function ProfilePage() {
@@ -505,16 +506,21 @@ export default function ProfilePage() {
 
   return (
     <PageTransition>
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="mx-auto max-w-6xl space-y-10">
         {/* Profile header */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          className="flex items-center justify-between gap-4 pt-6 sm:pt-10"
+        >
+          <div className="flex flex-col items-center gap-6 text-center sm:flex-row sm:text-left">
             <div
-              className={`relative flex h-24 w-24 cursor-pointer items-center justify-center overflow-hidden rounded-full border-2 transition-colors ${
+              className={`group relative flex h-28 w-28 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full ring-4 transition-all sm:h-32 sm:w-32 ${
                 dragOver
-                  ? "border-primary bg-primary/10"
-                  : "border-border bg-primary/20 hover:border-primary/70"
-              }`}
+                  ? "bg-primary/10 ring-primary"
+                  : "bg-gradient-to-br from-primary/30 to-primary/5 ring-white/10 hover:ring-primary/50"
+              } shadow-[0_20px_60px_-15px_hsl(var(--primary)/0.4)]`}
               onDragOver={(e) => {
                 e.preventDefault();
                 setDragOver(true);
@@ -536,13 +542,11 @@ export default function ProfilePage() {
                 <User className={`h-12 w-12 text-primary ${dragOver || uploadImageMutation.isPending ? "opacity-40" : ""}`} />
               )}
               <div
-                className={`absolute inset-0 flex flex-col items-center justify-center transition-opacity ${
-                  dragOver || uploadImageMutation.isPending ? "opacity-100" : "opacity-0 hover:opacity-100"
+                className={`absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity ${
+                  dragOver || uploadImageMutation.isPending ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                 }`}
               >
-                <div className="rounded-full bg-background/80 p-1.5">
-                  <Upload className="h-4 w-4 text-primary" />
-                </div>
+                <Upload className="h-5 w-5 text-primary" />
                 <span className="mt-1 text-[10px] font-medium text-foreground">
                   {uploadImageMutation.isPending ? "Uploading..." : "Change"}
                 </span>
@@ -556,21 +560,22 @@ export default function ProfilePage() {
               />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold text-foreground">{user?.username}</h1>
+              <p className="eyebrow mb-2">Your profile</p>
+              <div className="flex items-center justify-center gap-2 sm:justify-start">
+                <h1 className="display text-5xl leading-none text-foreground sm:text-6xl">{user?.username}</h1>
                 <button
                   type="button"
                   onClick={() => setEditOpen(true)}
-                  className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
                   aria-label="Edit profile"
                   title="Edit profile"
                 >
                   <Pencil className="h-4 w-4" />
                 </button>
               </div>
-              <p className="text-sm text-muted-foreground">{user?.email}</p>
-              <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1">
+              <p className="mt-2 text-sm text-muted-foreground">{user?.email}</p>
+              <div className="mt-2 flex items-center justify-center gap-3 text-xs text-muted-foreground sm:justify-start">
+                <span className="flex items-center gap-1 capitalize">
                   <Shield className="h-3 w-3" />
                   {user?.role}
                 </span>
@@ -582,17 +587,17 @@ export default function ProfilePage() {
               <Button
                 size="sm"
                 variant="outline"
-                className="mt-3 h-8 px-2"
+                className="mt-4"
                 onClick={handleSignOut}
               >
-                <LogOut className="mr-1 h-3.5 w-3.5" />
+                <LogOut className="h-3.5 w-3.5" />
                 Sign out
               </Button>
             </div>
           </div>
-        </div>
+        </motion.div>
 
-        <Tabs value={profileTab} onValueChange={setProfileTab} className="space-y-4">
+        <Tabs value={profileTab} onValueChange={setProfileTab} className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <TabsList>
               <TabsTrigger value="stats">Stats</TabsTrigger>
@@ -603,7 +608,7 @@ export default function ProfilePage() {
                 <div className="flex items-center gap-1.5">
                   <Label className="text-xs text-muted-foreground">Range</Label>
                   <Select value={statsPreset} onValueChange={(value) => setStatsPreset(value as StatsRangePreset)}>
-                    <SelectTrigger className="h-8 w-[140px] border-0 bg-transparent">
+                    <SelectTrigger className="h-9 w-[150px]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -620,7 +625,7 @@ export default function ProfilePage() {
                     value={statsGranularity}
                     onValueChange={(value) => setStatsGranularity(value as StatsGranularity)}
                   >
-                    <SelectTrigger className="h-8 w-[110px] border-0 bg-transparent">
+                    <SelectTrigger className="h-9 w-[120px]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -651,32 +656,36 @@ export default function ProfilePage() {
             </p>
 
             <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-              <div className="rounded-xl border border-border bg-card p-4">
-                <p className="text-xs text-muted-foreground">Music Videos in Library</p>
-                <div className="mt-2 flex items-center gap-2">
+              <div className="surface group relative overflow-hidden p-5 transition-colors hover:border-white/10">
+                <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-primary/10 blur-2xl" />
+                <p className="eyebrow">Music Videos in Library</p>
+                <div className="mt-3 flex items-center gap-2">
                   <Film className="h-4 w-4 text-primary" />
-                  <p className="text-lg font-semibold text-foreground">{libraryTotal?.total ?? 0}</p>
+                  <p className="display text-4xl leading-none text-foreground">{libraryTotal?.total ?? 0}</p>
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-card p-4">
-                <p className="text-xs text-muted-foreground">Total Watch Time</p>
-                <div className="mt-2 flex items-center gap-2">
+              <div className="surface group relative overflow-hidden p-5 transition-colors hover:border-white/10">
+                <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-primary/10 blur-2xl" />
+                <p className="eyebrow">Total Watch Time</p>
+                <div className="mt-3 flex items-center gap-2">
                   <Clock3 className="h-4 w-4 text-primary" />
-                  <p className="text-lg font-semibold text-foreground">{formatWatchTime(totalWatchSeconds)}</p>
+                  <p className="display text-4xl leading-none text-foreground">{formatWatchTime(totalWatchSeconds)}</p>
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-card p-4">
-                <p className="text-xs text-muted-foreground">Number of Views</p>
-                <div className="mt-2 flex items-center gap-2">
+              <div className="surface group relative overflow-hidden p-5 transition-colors hover:border-white/10">
+                <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-primary/10 blur-2xl" />
+                <p className="eyebrow">Number of Views</p>
+                <div className="mt-3 flex items-center gap-2">
                   <PlayCircle className="h-4 w-4 text-primary" />
-                  <p className="text-lg font-semibold text-foreground">{totalViews}</p>
+                  <p className="display text-4xl leading-none text-foreground">{totalViews}</p>
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-card p-4">
-                <p className="text-xs text-muted-foreground">Top Artist</p>
-                <div className="mt-2 flex items-center gap-2">
+              <div className="surface group relative overflow-hidden p-5 transition-colors hover:border-white/10">
+                <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-primary/10 blur-2xl" />
+                <p className="eyebrow">Top Artist</p>
+                <div className="mt-3 flex items-center gap-2">
                   <Radio className="h-4 w-4 text-primary" />
-                  <p className="truncate text-sm font-semibold text-foreground">
+                  <p className="truncate text-base font-medium text-foreground">
                     {topArtists[0]
                       ? topArtistMetric === "views"
                         ? `${topArtists[0].name} (${formatViewCount(topArtists[0].views)})`
@@ -685,11 +694,12 @@ export default function ProfilePage() {
                   </p>
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-card p-4">
-                <p className="text-xs text-muted-foreground">Top Music Video</p>
-                <div className="mt-2 flex items-center gap-2">
+              <div className="surface group relative overflow-hidden p-5 transition-colors hover:border-white/10">
+                <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-primary/10 blur-2xl" />
+                <p className="eyebrow">Top Music Video</p>
+                <div className="mt-3 flex items-center gap-2">
                   <Music2 className="h-4 w-4 text-primary" />
-                  <p className="truncate text-sm font-semibold text-foreground">
+                  <p className="truncate text-base font-medium text-foreground">
                     {topVideos[0]
                       ? topVideoMetric === "views"
                         ? `${topVideos[0].title} (${formatViewCount(topVideos[0].views)})`
@@ -701,27 +711,27 @@ export default function ProfilePage() {
             </section>
 
             <section className="grid gap-3 lg:grid-cols-2">
-              <div className="rounded-xl border border-border bg-card p-4">
-                <h3 className="mb-2 text-sm font-semibold text-foreground">
+              <div className="surface p-5 sm:p-6">
+                <h3 className="display mb-4 text-2xl text-foreground">
                   Views Trend ({statsGranularity === "daily" ? "Daily" : "Weekly"})
                 </h3>
                 <ChartContainer config={playsChartConfig} className="h-[240px] w-full">
                   <BarChart accessibilityLayer data={trendData}>
-                    <CartesianGrid vertical={false} />
+                    <CartesianGrid vertical={false} strokeOpacity={0.08} />
                     <XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={16} />
                     <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={28} />
                     <ChartTooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="views" fill="var(--color-views)" radius={4} />
+                    <Bar dataKey="views" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ChartContainer>
               </div>
-              <div className="rounded-xl border border-border bg-card p-4">
-                <h3 className="mb-2 text-sm font-semibold text-foreground">
+              <div className="surface p-5 sm:p-6">
+                <h3 className="display mb-4 text-2xl text-foreground">
                   Watch Time Trend ({statsGranularity === "daily" ? "Daily" : "Weekly"})
                 </h3>
                 <ChartContainer config={watchChartConfig} className="h-[240px] w-full">
                   <BarChart accessibilityLayer data={trendData}>
-                    <CartesianGrid vertical={false} />
+                    <CartesianGrid vertical={false} strokeOpacity={0.08} />
                     <XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={16} />
                     <YAxis tickLine={false} axisLine={false} width={36} />
                     <ChartTooltip
@@ -731,22 +741,22 @@ export default function ProfilePage() {
                         />
                       }
                     />
-                    <Bar dataKey="watch_minutes" fill="#22c55e" radius={4} />
+                    <Bar dataKey="watch_minutes" fill="hsl(var(--primary) / 0.65)" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ChartContainer>
               </div>
             </section>
 
             <section className="grid gap-3 lg:grid-cols-2">
-              <div className="rounded-xl border border-border bg-card p-4">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-foreground">Top Artists</h3>
+              <div className="surface p-5 sm:p-6">
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <h3 className="display text-2xl text-foreground">Top artists</h3>
                   <div className="flex items-center gap-2">
                     <Select
                       value={topArtistMetric}
                       onValueChange={(value) => setTopArtistMetric(value as TopArtistMetric)}
                     >
-                      <SelectTrigger className="h-8 w-[170px]">
+                      <SelectTrigger className="h-8 w-[150px] text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -770,10 +780,10 @@ export default function ProfilePage() {
                     {topArtists.map((artist, index) => (
                       <div
                         key={artist.id}
-                        className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 transition-colors hover:border-primary/35 hover:bg-secondary/20"
+                        className="group flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.05]"
                         onClick={() => navigate(`/artist/${artist.id}`)}
                       >
-                        <div className="h-10 w-10 overflow-hidden rounded-full bg-secondary">
+                        <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-secondary ring-1 ring-white/10">
                           {topArtistImageMap.get(artist.id) ? (
                             <img
                               src={topArtistImageMap.get(artist.id) || ""}
@@ -795,21 +805,21 @@ export default function ProfilePage() {
                               : formatWatchTime(artist.watch_seconds)}
                           </p>
                         </div>
-                        <p className="text-xs font-medium text-muted-foreground">#{index + 1}</p>
+                        <p className="display w-8 text-right text-2xl text-muted-foreground/60 transition-colors group-hover:text-primary">{index + 1}</p>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-              <div className="rounded-xl border border-border bg-card p-4">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-foreground">Top Music Videos</h3>
+              <div className="surface p-5 sm:p-6">
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <h3 className="display text-2xl text-foreground">Top music videos</h3>
                   <div className="flex items-center gap-2">
                     <Select
                       value={topVideoMetric}
                       onValueChange={(value) => setTopVideoMetric(value as TopVideoMetric)}
                     >
-                      <SelectTrigger className="h-8 w-[170px]">
+                      <SelectTrigger className="h-8 w-[150px] text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -833,10 +843,10 @@ export default function ProfilePage() {
                     {topVideos.map((video, index) => (
                       <div
                         key={video.id}
-                        className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 transition-colors hover:border-primary/35 hover:bg-secondary/20"
+                        className="group flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.05]"
                         onClick={() => navigate(`/video/${video.id}`)}
                       >
-                        <div className="h-12 w-20 overflow-hidden rounded bg-secondary">
+                        <div className="h-12 w-20 shrink-0 overflow-hidden rounded-lg bg-secondary">
                           {topVideoThumbMap.get(video.id) ? (
                             <img
                               src={topVideoThumbMap.get(video.id) || ""}
@@ -859,7 +869,7 @@ export default function ProfilePage() {
                               : formatWatchTime(video.watch_seconds)}
                           </p>
                         </div>
-                        <p className="text-xs font-medium text-muted-foreground">#{index + 1}</p>
+                        <p className="display w-8 text-right text-2xl text-muted-foreground/60 transition-colors group-hover:text-primary">{index + 1}</p>
                       </div>
                     ))}
                   </div>
@@ -869,10 +879,10 @@ export default function ProfilePage() {
           </TabsContent>
 
           <TabsContent value="history">
-            <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+            <section className="surface space-y-4 p-5 sm:p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-base font-semibold text-foreground">Playback History</h2>
+                  <h2 className="display text-3xl text-foreground">Playback history</h2>
                   <p className="text-xs text-muted-foreground">
                     Records every playback session. Views are tracked separately when watch time reaches {viewThresholdPercent}% of a video.
                   </p>
@@ -891,7 +901,7 @@ export default function ProfilePage() {
                     <SelectValue placeholder="Filter by artist" />
                   </SelectTrigger>
                   <SelectContent>
-                    <div className="sticky top-0 z-10 border-b border-border bg-popover p-2">
+                    <div className="sticky top-0 z-10 border-b border-white/10 bg-popover p-2">
                       <Input
                         value={historyArtistSearch}
                         onChange={(e) => setHistoryArtistSearch(e.target.value)}
@@ -941,7 +951,7 @@ export default function ProfilePage() {
               ) : (
                 <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
                   {filteredPlaybackHistory.map((entry) => (
-                    <div key={entry.id} className="rounded-md border border-border px-3 py-2">
+                    <div key={entry.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 transition-colors hover:bg-white/[0.04]">
                       <p className="text-sm font-medium text-foreground">{entry.video_title}</p>
                       <p className="text-xs text-muted-foreground">{entry.artist_name}</p>
                       <p className="text-xs text-muted-foreground">

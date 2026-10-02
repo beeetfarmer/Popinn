@@ -36,7 +36,10 @@ import {
   X,
   Play,
   Shuffle,
+  SlidersHorizontal,
 } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
+import { VideoGridSkeleton } from "@/components/Skeletons";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -294,60 +297,54 @@ export default function MusicVideosPage() {
   return (
     <PageTransition>
       <div>
-        <div className="mb-6 flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold text-foreground">Music Videos</h1>
-          <span className="text-sm text-muted-foreground">({total})</span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={queueLoading}
-            onClick={() => startLibraryQueue(false)}
-          >
-            <Play className="mr-1 h-4 w-4" /> Play All
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={queueLoading}
-            onClick={() => startLibraryQueue(true)}
-          >
-            <Shuffle className="mr-1 h-4 w-4" /> Shuffle
-          </Button>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            {isAdmin && !selectMode ? (
-              <Button variant="outline" size="sm" onClick={() => setSelectMode(true)}>
-                <CheckSquare className="mr-1 h-4 w-4" /> Select
+        <PageHeader
+          eyebrow="Library"
+          title="Music videos"
+          meta={videosLoading ? undefined : total}
+          actions={
+            <>
+              <Button disabled={queueLoading} onClick={() => startLibraryQueue(false)}>
+                <Play className="h-4 w-4 fill-current" /> Play all
               </Button>
-            ) : isAdmin ? (
-              <>
-                <Button variant="outline" size="sm" onClick={toggleAll}>
-                  {selected.size === visible.length && visible.length > 0 ? (
-                    <><CheckSquare className="mr-1 h-4 w-4" /> Deselect All</>
-                  ) : (
-                    <><Square className="mr-1 h-4 w-4" /> Select All</>
-                  )}
+              <Button variant="outline" disabled={queueLoading} onClick={() => startLibraryQueue(true)}>
+                <Shuffle className="h-4 w-4" /> Shuffle
+              </Button>
+              {isAdmin && !selectMode ? (
+                <Button variant="ghost" onClick={() => setSelectMode(true)}>
+                  <CheckSquare className="h-4 w-4" /> Select
                 </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={selected.size === 0 || bulkDelete.isPending}
-                  onClick={() => setDeleteSelectedOpen(true)}
-                >
-                  <Trash2 className="mr-1 h-4 w-4" />
-                  Delete ({selected.size})
-                </Button>
-                <Button variant="ghost" size="sm" onClick={exitSelectMode}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </>
-            ) : null}
-          </div>
-        </div>
+              ) : isAdmin ? (
+                <div className="glass flex items-center gap-1 rounded-full p-1">
+                  <Button variant="ghost" size="sm" onClick={toggleAll}>
+                    {selected.size === visible.length && visible.length > 0 ? (
+                      <><CheckSquare className="h-4 w-4" /> Deselect all</>
+                    ) : (
+                      <><Square className="h-4 w-4" /> Select all</>
+                    )}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={selected.size === 0 || bulkDelete.isPending}
+                    onClick={() => setDeleteSelectedOpen(true)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete ({selected.size})
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Exit selection" onClick={exitSelectMode}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          }
+        />
 
         {/* Filters & Sort */}
-        <div className="mb-6 flex flex-wrap gap-3">
+        <div className="mb-8 flex flex-wrap items-center gap-2">
+          <SlidersHorizontal className="mr-1 hidden h-4 w-4 text-muted-foreground sm:block" />
           <Select value={filterArtist} onValueChange={setFilterArtist}>
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-auto min-w-[10rem]">
               <SelectValue placeholder="All Artists" />
             </SelectTrigger>
             <SelectContent>
@@ -359,7 +356,7 @@ export default function MusicVideosPage() {
           </Select>
 
           <Select value={filterGenre} onValueChange={setFilterGenre}>
-            <SelectTrigger className="w-36">
+            <SelectTrigger className="w-auto min-w-[9rem]">
               <SelectValue placeholder="All Genres" />
             </SelectTrigger>
             <SelectContent>
@@ -371,7 +368,7 @@ export default function MusicVideosPage() {
           </Select>
 
           <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="w-36">
+            <SelectTrigger className="w-auto min-w-[9rem]">
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent>
@@ -384,7 +381,7 @@ export default function MusicVideosPage() {
           </Select>
 
           <Select value={sortOrder} onValueChange={setSortOrder}>
-            <SelectTrigger className="w-32">
+            <SelectTrigger className="w-auto min-w-[8rem]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -395,22 +392,21 @@ export default function MusicVideosPage() {
         </div>
 
         {/* Video grid */}
-        {videosLoading && (
-          <p className="py-8 text-center text-muted-foreground">Loading videos...</p>
-        )}
+        {videosLoading && <VideoGridSkeleton count={15} />}
         {/* A later infinite-scroll page failing must not blank the videos already
             on screen -- only report the error when nothing has loaded at all. */}
         {videosError && !hasItems && (
           <p className="py-8 text-center text-destructive">Failed to load videos</p>
         )}
         {hasItems && (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
           {visible.map((v) => (
             <div key={v.id} className="relative">
               {isAdmin && selectMode && (
                 <button
                   onClick={() => toggleSelect(v.id)}
-                  className="absolute left-2 top-2 z-10 rounded bg-background/80 p-1"
+                  aria-label={selected.has(v.id) ? "Deselect video" : "Select video"}
+                  className="absolute left-2 top-2 z-10 rounded-full bg-black/60 p-1.5 backdrop-blur-md transition-transform hover:scale-110"
                 >
                   {selected.has(v.id) ? (
                     <CheckSquare className="h-5 w-5 text-primary" />
@@ -420,7 +416,7 @@ export default function MusicVideosPage() {
                 </button>
               )}
               {isAdmin && selectMode && selected.has(v.id) && (
-                <div className="absolute inset-0 z-[5] rounded-lg ring-2 ring-primary pointer-events-none" />
+                <div className="pointer-events-none absolute inset-x-0 top-0 z-[5] aspect-video rounded-xl bg-primary/10 ring-2 ring-primary" />
               )}
               <VideoCard video={v} />
             </div>
@@ -429,7 +425,10 @@ export default function MusicVideosPage() {
         )}
 
         {!videosLoading && !videosError && total === 0 && (
-          <p className="py-12 text-center text-muted-foreground">No videos match your filters</p>
+          <div className="py-24 text-center">
+            <p className="display text-3xl text-foreground">Nothing here</p>
+            <p className="mt-2 text-sm text-muted-foreground">No videos match your filters</p>
+          </div>
         )}
 
         {/* Infinite scroll: sentinel plus a live count, so it is clear whether
@@ -437,9 +436,12 @@ export default function MusicVideosPage() {
         {infiniteScroll && total > 0 && hasItems && (
           <>
             <div ref={sentinelRef} aria-hidden className="h-px" />
-            <div className="mt-8 text-center text-sm text-muted-foreground">
+            <div className="mt-12 flex justify-center text-sm text-muted-foreground">
               {isFetchingNextPage ? (
-                "Loading more..."
+                <span className="flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                  Loading more...
+                </span>
               ) : videosError ? (
                 <button
                   type="button"
@@ -459,21 +461,23 @@ export default function MusicVideosPage() {
 
         {/* Pagination */}
         {!infiniteScroll && totalPages > 1 && (
-          <div className="mt-8 flex items-center justify-center gap-2">
+          <div className="glass mx-auto mt-12 flex w-fit items-center gap-2 rounded-full p-1.5">
             <Button
-              variant="outline"
-              size="sm"
+              variant="ghost"
+              size="icon"
+              aria-label="Previous page"
               disabled={page === 1}
               onClick={() => setPage((p) => p - 1)}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <span className="text-sm text-muted-foreground">
-              Page {page} of {totalPages}
+            <span className="px-3 text-sm tabular-nums text-muted-foreground">
+              Page <span className="text-foreground">{page}</span> of {totalPages}
             </span>
             <Button
-              variant="outline"
-              size="sm"
+              variant="ghost"
+              size="icon"
+              aria-label="Next page"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
             >
