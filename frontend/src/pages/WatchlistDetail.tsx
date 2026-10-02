@@ -70,6 +70,9 @@ export default function WatchlistDetail() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["watchlist", id] });
+      // The overview's count and cover would otherwise stay stale.
+      queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      queryClient.invalidateQueries({ queryKey: ["watchlist-preview", id] });
       toast.success("Video removed");
     },
     onError: (_error, _videoId, context) => {

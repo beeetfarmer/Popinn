@@ -110,6 +110,8 @@ export default function VideoCard({ video }: VideoCardProps) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      // Covers on the Watchlists page come from these previews.
+      queryClient.invalidateQueries({ queryKey: ["watchlist-preview"] });
       toast.success("Added to watchlist");
     },
     onError: (error: unknown) => {
@@ -130,6 +132,8 @@ export default function VideoCard({ video }: VideoCardProps) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      // Covers on the Watchlists page come from these previews.
+      queryClient.invalidateQueries({ queryKey: ["watchlist-preview"] });
       setCreateWatchlistOpen(false);
       setNewWatchlistName("");
       toast.success("Created watchlist and added video");

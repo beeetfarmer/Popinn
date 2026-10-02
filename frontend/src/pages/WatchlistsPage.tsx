@@ -46,13 +46,46 @@ interface WatchlistDetailData {
   videos: MusicVideo[];
 }
 
-function seededIndex(seed: string, modulo: number): number {
-  if (modulo <= 0) return 0;
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash) % modulo;
+/**
+ * YouTube-style playlist cover: the first video's thumbnail with the video
+ * count laid over it. Falls back to a placeholder for an empty list.
+ */
+function WatchlistCover({
+  thumb,
+  name,
+  count,
+  compact = false,
+}: {
+  thumb: string | null;
+  name: string;
+  count: number;
+  compact?: boolean;
+}) {
+  return (
+    <div className="relative aspect-video overflow-hidden bg-secondary">
+      {thumb ? (
+        <img
+          src={thumb}
+          alt={name}
+          loading="lazy"
+          decoding="async"
+          className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-secondary to-muted">
+          <ListVideo className={compact ? "h-6 w-6 text-muted-foreground/60" : "h-10 w-10 text-muted-foreground/60"} />
+        </div>
+      )}
+      <span
+        className={`absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-md bg-black/70 font-medium text-white backdrop-blur-md ${
+          compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-xs"
+        }`}
+      >
+        <ListVideo className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
+        {count} video{count !== 1 ? "s" : ""}
+      </span>
+    </div>
+  );
 }
 
 export default function WatchlistsPage() {
@@ -81,7 +114,7 @@ export default function WatchlistsPage() {
     queries: watchlists.map((wl) => ({
       queryKey: ["watchlist-preview", wl.id],
       queryFn: () => api.get<WatchlistDetailData>(`/watchlists/${wl.id}`),
-      enabled: viewMode === "cards",
+      // Both views show a cover now, so the preview is always needed.
       staleTime: 30_000,
     })),
   });
@@ -93,11 +126,6 @@ export default function WatchlistsPage() {
     });
     return map;
   }, [watchlists, previewQueries]);
-
-  const daySeed = useMemo(
-    () => Math.floor(Date.now() / 86_400_000).toString(),
-    []
-  );
 
   const createMutation = useMutation({
     mutationFn: (name: string) => api.post("/watchlists/", { name }),
@@ -250,8 +278,13 @@ export default function WatchlistsPage() {
                 className="surface group flex cursor-pointer items-center gap-4 p-4 transition-all duration-300 hover:border-white/15 hover:bg-white/[0.04]"
                 onClick={() => navigate(`/watchlists/${wl.id}`)}
               >
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20 transition-transform duration-300 group-hover:scale-105">
-                  <ListVideo className="h-5 w-5 text-primary" />
+                <div className="w-36 shrink-0 overflow-hidden rounded-xl ring-1 ring-white/[0.08] sm:w-44">
+                  <WatchlistCover
+                    thumb={previewById[wl.id]?.videos[0]?.thumbnail_url || null}
+                    name={wl.name}
+                    count={wl.item_count}
+                    compact
+                  />
                 </div>
                 <div className="min-w-0 flex-1">
                   <h3 className="truncate font-medium text-foreground">{wl.name}</h3>
@@ -287,11 +320,7 @@ export default function WatchlistsPage() {
         ) : (
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {watchlists.map((wl, i) => {
-              const videos = previewById[wl.id]?.videos || [];
-              const randomVideo = videos.length > 0
-                ? videos[seededIndex(`${wl.id}-${daySeed}`, videos.length)]
-                : null;
-              const thumb = randomVideo?.thumbnail_url || null;
+              const thumb = previewById[wl.id]?.videos[0]?.thumbnail_url || null;
 
               return (
                 <motion.div
@@ -306,19 +335,15 @@ export default function WatchlistsPage() {
                   <div className="absolute inset-x-4 -top-2 h-full rounded-2xl bg-white/[0.04] ring-1 ring-white/[0.05] transition-transform duration-500 group-hover:-translate-y-1" />
                   <div className="absolute inset-x-2 -top-1 h-full rounded-2xl bg-white/[0.06] ring-1 ring-white/[0.06] transition-transform duration-500 group-hover:-translate-y-0.5" />
                   <div className="relative overflow-hidden rounded-2xl bg-card ring-1 ring-white/[0.08] transition-all duration-500 group-hover:-translate-y-1 group-hover:ring-white/20 group-hover:shadow-[0_20px_50px_-15px_rgba(0,0,0,0.9)]">
-                    <div className="relative aspect-video bg-secondary">
-                      {thumb ? (
-                        <img
-                          src={thumb}
-                          alt={wl.name}
-                          className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-secondary to-muted">
-                          <ListVideo className="h-10 w-10 text-muted-foreground/60" />
+                    <div className="relative">
+                      <WatchlistCover thumb={thumb} name={wl.name} count={wl.item_count} />
+                      {wl.item_count > 0 && (
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+                          <span className="flex items-center gap-2 text-sm font-medium text-white">
+                            <ListVideo className="h-4 w-4" /> View list
+                          </span>
                         </div>
                       )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-card via-card/10 to-transparent" />
                       <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)]:opacity-100">
                         <button
                           onClick={(e) => {
