@@ -12,6 +12,7 @@ from app.core.rate_limit import rate_limiter
 logger = logging.getLogger(__name__)
 
 LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/"
+DEEZER_ARTIST_SEARCH_URL = "https://api.deezer.com/search/artist"
 LASTFM_ATTRIBUTION_LINE = "Artist information powered by Last.fm"
 LASTFM_LINK_PREFIX = "Last.fm:"
 
@@ -149,81 +150,34 @@ def _request_json_with_retries(
     return None
 
 
-def _request_text_with_retries(
-    *,
-    url: str,
-    timeout_seconds: float,
-    rate_bucket: str,
-    context: str,
-) -> str | None:
-    for attempt in range(_retry_attempts()):
-        rate_limiter.wait(rate_bucket, "global", settings.LASTFM_API_RATE_LIMIT)
-        try:
-            with httpx.Client(timeout=timeout_seconds, follow_redirects=True) as client:
-                resp = client.get(url)
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as exc:
-            if attempt < _retry_attempts() - 1:
-                logger.warning(
-                    "%s request failed (%s). Retrying (%s/%s).",
-                    context,
-                    type(exc).__name__,
-                    attempt + 1,
-                    _retry_attempts(),
-                )
-                time.sleep(_retry_backoff_seconds(attempt))
-                continue
-            logger.warning("%s request failed after retries: %s", context, type(exc).__name__)
-            return None
-
-        if resp.status_code == 429:
-            retry_after = _parse_retry_after_seconds(resp)
-            if attempt < _retry_attempts() - 1:
-                time.sleep(retry_after if retry_after is not None else _retry_backoff_seconds(attempt))
-                continue
-            logger.warning("%s rate-limited by upstream provider.", context)
-            return None
-
-        if resp.status_code >= 500:
-            if attempt < _retry_attempts() - 1:
-                time.sleep(_retry_backoff_seconds(attempt))
-                continue
-            logger.warning("%s failed with upstream status %s.", context, resp.status_code)
-            return None
-
-        if resp.status_code >= 400:
-            logger.warning("%s failed with status %s.", context, resp.status_code)
-            return None
-
-        return resp.text
-
-    return None
-
-
-def _fetch_artist_page_image_url(artist_name: str) -> str | None:
-    artist_page_url = build_lastfm_artist_url(artist_name)
-    html = _request_text_with_retries(
-        url=artist_page_url,
+def _fetch_deezer_image_url(artist_name: str) -> str | None:
+    # Last.fm stopped serving artist images through its API in 2019, and its
+    # artist pages now answer non-browser clients with a bot challenge, so the
+    # og:image scrape that used to fill the gap returns nothing. Deezer's search
+    # is keyless. Common names have many namesakes ("Twice" matches a dozen
+    # artists), so take the exact name match with the most fans.
+    data = _request_json_with_retries(
+        url=DEEZER_ARTIST_SEARCH_URL,
+        params={"q": artist_name, "limit": 25},
         timeout_seconds=15,
-        rate_bucket="lastfm_api",
-        context=f"Last.fm artist page ({artist_name})",
+        rate_bucket="deezer_api",
+        context=f"Deezer artist search ({artist_name})",
     )
-    if not html:
+    rows = (data or {}).get("data")
+    if not isinstance(rows, list):
         return None
-
-    patterns = [
-        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-        r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
-        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']twitter:image["\']',
+    target = normalize_for_match(artist_name)
+    matches = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and normalize_for_match(str(row.get("name") or "")) == target
+        and row.get("picture_xl")
     ]
-    for pattern in patterns:
-        match = re.search(pattern, html, flags=re.IGNORECASE)
-        if not match:
-            continue
-        candidate = _normalize_image_url(match.group(1))
-        if candidate:
-            return candidate
-    return None
+    if not matches:
+        return None
+    best = max(matches, key=lambda row: row.get("nb_fan") or 0)
+    return _normalize_image_url(best["picture_xl"])
 
 
 def build_lastfm_artist_url(artist_name: str) -> str:
@@ -531,9 +485,9 @@ def fetch_artist_info(artist_name: str, api_key: str) -> dict | None:
                 if matched.get("name"):
                     canonical_name = str(matched["name"]).strip() or canonical_name
         if not image_url:
-            image_url = _fetch_artist_page_image_url(canonical_name)
+            image_url = _fetch_deezer_image_url(canonical_name)
         if not image_url and canonical_name != artist_name:
-            image_url = _fetch_artist_page_image_url(artist_name)
+            image_url = _fetch_deezer_image_url(artist_name)
 
         bio_with_attribution = add_lastfm_attribution(bio_content or None, canonical_name)
         return {
