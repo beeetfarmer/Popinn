@@ -11,14 +11,13 @@ export default function HeroCarousel({ videos }: HeroCarouselProps) {
   const [current, setCurrent] = useState(0);
   const [isVisible, setIsVisible] = useState(true);
   const [failedPreviewIds, setFailedPreviewIds] = useState<Set<string>>(new Set());
-  const [failedVideoIds, setFailedVideoIds] = useState<Set<string>>(new Set());
   const sectionRef = useRef<HTMLElement | null>(null);
   const activeVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // Pick up to 8 random videos from the full library.
   const slides = useMemo(
     () =>
-      videos
+      [...videos]
         .sort(() => Math.random() - 0.5)
         .slice(0, 8),
     [videos]
@@ -65,14 +64,10 @@ export default function HeroCarousel({ videos }: HeroCarouselProps) {
   const activePreviewUsable = Boolean(
     activeSlide?.preview_url && !failedPreviewIds.has(activeSlide.id)
   );
-  const activeVideoUsable = Boolean(
-    activeSlide?.video_url && !failedVideoIds.has(activeSlide.id)
-  );
-  const activeMediaUrl = activePreviewUsable
-    ? activeSlide.preview_url
-    : activeVideoUsable
-      ? activeSlide.video_url
-      : null;
+  // Previews only. Falling back to video_url streamed the full original file
+  // (often 4K, hundreds of MB) just to decorate the home page; the thumbnail
+  // is shown instead until the preview exists.
+  const activeMediaUrl = activePreviewUsable ? activeSlide.preview_url : null;
 
   useEffect(() => {
     const el = activeVideoRef.current;
@@ -146,15 +141,7 @@ export default function HeroCarousel({ videos }: HeroCarouselProps) {
                 autoPlay
                 preload="metadata"
                 onError={() => {
-                  if (activePreviewUsable) {
-                    setFailedPreviewIds((prev) => {
-                      const next = new Set(prev);
-                      next.add(activeSlide.id);
-                      return next;
-                    });
-                    return;
-                  }
-                  setFailedVideoIds((prev) => {
+                  setFailedPreviewIds((prev) => {
                     const next = new Set(prev);
                     next.add(activeSlide.id);
                     return next;
