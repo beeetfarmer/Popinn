@@ -85,7 +85,7 @@ export default function ProfileStatsRankingsPage() {
 
   const { data: artists = [] } = useQuery<Artist[]>({
     queryKey: ["artists"],
-    queryFn: () => api.get("/artists/?limit=200"),
+    queryFn: () => api.get("/artists/?limit=2000"),
   });
 
   const { data: videos = [] } = useQuery<MusicVideo[]>({
