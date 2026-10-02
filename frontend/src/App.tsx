@@ -3,6 +3,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { MotionConfig } from "framer-motion";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { QueueProvider } from "@/contexts/QueueContext";
 import Layout from "@/components/Layout";
@@ -26,6 +27,8 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    {/* Honour the OS "reduce motion" setting for every framer animation. */}
+    <MotionConfig reducedMotion="user">
     <TooltipProvider>
       <Toaster />
       <Sonner />
@@ -63,6 +66,7 @@ const App = () => (
         </QueueProvider>
       </AuthProvider>
     </TooltipProvider>
+    </MotionConfig>
   </QueryClientProvider>
 );
 
