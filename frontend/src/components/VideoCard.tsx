@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreVertical, Pencil, Trash2, ListPlus, Play } from "lucide-react";
@@ -92,10 +92,9 @@ export default function VideoCard({ video }: VideoCardProps) {
   const [spotifyQuery, setSpotifyQuery] = useState(video.title);
   const [spotifySearching, setSpotifySearching] = useState(false);
   const [spotifyResults, setSpotifyResults] = useState<SpotifyTrackMatch[]>([]);
-  const hoverPreviewUrl = useMemo(
-    () => video.video_url || video.playback_url || null,
-    [video.playback_url, video.video_url]
-  );
+  // The 360p preview clip, never the original: brushing the mouse across a
+  // grid otherwise starts streaming several full-resolution files at once.
+  const hoverPreviewUrl = video.preview_url || null;
   const showHoverPreview = hoverPreviewEnabled && isHovered && !!hoverPreviewUrl;
 
   const { data: watchlists = [] } = useQuery<WatchlistItem[]>({

@@ -139,6 +139,10 @@ def generate_thumbnail(
                 "-ss", timestamp,
                 "-i", video_path,
                 "-vframes", "1",
+                # Cards show this at ~300px and the hero preview is 360p, so a
+                # source-resolution frame (4K is ~570KB) is pure download cost.
+                # 540p stays sharp at 2x DPR; min() avoids upscaling small sources.
+                "-vf", "scale=-2:'min(540,ih)'",
                 "-q:v", "2",
                 "-y",
                 output_path,
