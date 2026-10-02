@@ -4,7 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { MusicVideo } from "@/data/mockData";
 import PageTransition from "@/components/PageTransition";
-import { ArrowLeft, Calendar, Disc, Tag, User, Clock, AlertCircle, Loader2, ListOrdered, SkipBack, SkipForward, GripVertical } from "lucide-react";
+import { ArrowLeft, Calendar, Disc, Tag, User, Clock, AlertCircle, Loader2, ListOrdered, SkipBack, SkipForward, GripVertical, Eye, Timer, History, Play } from "lucide-react";
+import { motion } from "framer-motion";
+import { Skeleton } from "@/components/ui/skeleton";
+import { VideoCardSkeleton } from "@/components/Skeletons";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -302,7 +305,13 @@ export default function VideoPlayer() {
   }, [id, subtitles]);
 
   if (!video) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    return (
+      <div className="mx-auto max-w-[1600px] pt-14">
+        <Skeleton className="aspect-video w-full rounded-2xl" />
+        <Skeleton className="mt-8 h-12 w-2/3 rounded-xl" />
+        <Skeleton className="mt-3 h-4 w-1/3" />
+      </div>
+    );
   }
 
   function goPreviousInQueue() {
@@ -332,18 +341,35 @@ export default function VideoPlayer() {
 
   return (
     <PageTransition>
-      <div className="mx-auto max-w-6xl lg:flex lg:items-start lg:gap-6">
-        <div className="min-w-0 flex-1">
+      {/* Ambient light: the artwork, blurred huge, glowing behind the player.
+          Absolute and full-bleed rather than fixed: a fixed layer inside the
+          animated page wrapper is clipped to that wrapper mid-transition. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[110vh] w-screen -translate-x-1/2 overflow-hidden [mask-image:linear-gradient(to_bottom,black_30%,transparent)]"
+      >
+        <img
+          key={video.id}
+          src={video.thumbnail_url || undefined}
+          alt=""
+          className="h-full w-full scale-125 animate-fade-up object-cover opacity-25 blur-[100px] brightness-75 saturate-150"
+        />
+      </div>
+
+      <div className="relative mx-auto max-w-[1600px] lg:flex lg:items-start lg:justify-center lg:gap-8">
+        {/* Column width is capped so the player's height always clears the
+            floating dock -- otherwise the dock sits on top of the seek bar. */}
+        <div className="mx-auto min-w-0 max-w-[calc((100vh-12rem)*16/9)] flex-1 lg:mx-0">
           <button
             type="button"
             onClick={handleBack}
-            className="mb-4 inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80"
+            className="glass mb-5 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" /> Back
           </button>
 
           {/* Player */}
-          <div className="relative aspect-video overflow-hidden rounded-xl border border-border bg-card">
+          <div className="relative aspect-video overflow-hidden rounded-2xl bg-black shadow-[0_40px_120px_-30px_rgba(0,0,0,0.95)] ring-1 ring-white/10">
             {sourceUrl ? (
               <>
                 {videoLoading && !videoError && (
@@ -408,8 +434,8 @@ export default function VideoPlayer() {
                   alt={video.title}
                   className="h-full w-full object-cover"
                 />
-                <div className="absolute inset-0 flex items-center justify-center bg-background/50">
-                  <span className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">
+                <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-sm">
+                  <span className="rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground">
                     No video file
                   </span>
                 </div>
@@ -418,46 +444,56 @@ export default function VideoPlayer() {
           </div>
 
           {/* Info */}
-          <div className="mt-6 space-y-4">
-            <h1 className="text-2xl font-bold text-foreground">{video.title}</h1>
+          <motion.div
+            key={video.id}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+            className="mt-8 space-y-6"
+          >
+            <div>
+              <Link
+                to={`/artist/${video.artist_id}`}
+                className="eyebrow inline-flex items-center gap-2 text-primary transition-colors hover:text-primary/80"
+              >
+                <User className="h-3.5 w-3.5" />
+                {video.artist_name}
+              </Link>
+              <h1 className="display mt-2 text-4xl leading-[1.05] text-foreground sm:text-5xl lg:text-6xl">
+                {video.title}
+              </h1>
+            </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <InfoItem icon={User} label="Artist">
-                <Link to={`/artist/${video.artist_id}`} className="text-primary hover:underline">
-                  {video.artist_name}
-                </Link>
-              </InfoItem>
+            <div className="flex flex-wrap items-center gap-2">
               {video.album && <InfoItem icon={Disc} label="Album">{video.album}</InfoItem>}
               {video.genre && <InfoItem icon={Tag} label="Genre">{video.genre}</InfoItem>}
               {video.year && <InfoItem icon={Calendar} label="Year">{video.year}</InfoItem>}
               <InfoItem icon={Clock} label="Duration">{video.duration_display}</InfoItem>
-              <InfoItem icon={User} label="Number of Views">
+              <InfoItem icon={Eye} label="Views">
                 {(playStats?.play_count || 0).toString()}
               </InfoItem>
-              <InfoItem icon={Clock} label="Playback Time">
+              <InfoItem icon={Timer} label="Watched">
                 {formatPlaybackTotal(playStats?.total_watched_seconds || 0)}
               </InfoItem>
-            </div>
-
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setHistoryOpen(true)}
-              >
-                View Playback History
+              <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)}>
+                <History className="h-4 w-4" /> Playback history
               </Button>
             </div>
+          </motion.div>
 
-            <section className="space-y-3 pt-2">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-foreground">
-                  {recommendationHeading}
-                </h2>
+          <div className="mt-12 space-y-4">
+            <section className="space-y-4">
+              <div className="flex items-end justify-between">
+                <div>
+                  <p className="eyebrow mb-1.5">Up next</p>
+                  <h2 className="display text-3xl text-foreground">
+                    {recommendationHeading}
+                  </h2>
+                </div>
                 {recommendations?.has_more && (
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="ghost"
                     onClick={() => setRecommendationPage((prev) => prev + 1)}
                   >
                     See more
@@ -465,26 +501,37 @@ export default function VideoPlayer() {
                 )}
               </div>
               {recommendationsLoading ? (
-                <p className="text-sm text-muted-foreground">Loading recommendations...</p>
+                <div className="flex gap-4 overflow-hidden">
+                  {Array.from({ length: 4 }, (_, i) => (
+                    <div key={i} className="w-60 shrink-0">
+                      <VideoCardSkeleton />
+                    </div>
+                  ))}
+                </div>
               ) : recommendations && recommendations.items.length > 0 ? (
-                <div className="flex gap-3 overflow-x-auto pb-2">
+                <div className="-mx-1 flex snap-x gap-4 overflow-x-auto px-1 pb-4 pt-2 scrollbar-none">
                   {recommendations.items.map((item) => (
                     <button
                       key={item.video.id}
                       type="button"
                       onClick={() => playRecommendedVideo(item.video)}
-                      className="w-52 shrink-0 overflow-hidden rounded-lg border border-border bg-card text-left transition-colors hover:border-primary/40"
+                      className="group w-60 shrink-0 snap-start text-left outline-none"
                     >
-                      <div className="relative aspect-video bg-secondary">
+                      <div className="relative aspect-video overflow-hidden rounded-xl bg-secondary ring-1 ring-white/[0.06] transition-all duration-500 group-hover:-translate-y-1 group-hover:ring-white/20 group-hover:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.9)]">
                         <img
                           src={item.video.thumbnail_url || "/placeholder.svg"}
                           alt={item.video.title}
-                          className="h-full w-full object-cover"
+                          className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
                           loading="lazy"
                         />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                            <Play className="ml-0.5 h-4 w-4 fill-current" />
+                          </span>
+                        </div>
                       </div>
-                      <div className="space-y-0.5 p-3">
-                        <p className="line-clamp-2 text-sm font-semibold text-foreground">
+                      <div className="mt-3 space-y-0.5 px-0.5">
+                        <p className="line-clamp-2 text-sm font-medium text-foreground transition-colors group-hover:text-primary">
                           {item.video.title}
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
@@ -504,31 +551,35 @@ export default function VideoPlayer() {
         </div>
 
         {queue.length > 1 && (
-          <aside className="mt-5 rounded-xl border border-border bg-card p-4 lg:sticky lg:top-4 lg:mt-0 lg:w-96">
-            <div className="mb-3 flex items-center gap-2">
+          <aside className="glass mt-8 rounded-3xl p-4 lg:sticky lg:top-6 lg:mt-14 lg:w-[400px]">
+            <div className="mb-4 flex items-center gap-2 px-1">
               <ListOrdered className="h-4 w-4 text-primary" />
-              <h2 className="text-sm font-semibold text-foreground">Queue</h2>
-              <span className="text-xs text-muted-foreground">({queue.length})</span>
+              <h2 className="display text-2xl text-foreground">Queue</h2>
+              <span className="text-xs tabular-nums text-muted-foreground">{queue.length}</span>
+              <div className="ml-auto flex gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9"
+                  aria-label="Previous in queue"
+                  disabled={!hasPrevious}
+                  onClick={goPreviousInQueue}
+                >
+                  <SkipBack className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9"
+                  aria-label="Next in queue"
+                  disabled={!hasNext}
+                  onClick={goNextInQueue}
+                >
+                  <SkipForward className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            <div className="mb-3 flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!hasPrevious}
-                onClick={goPreviousInQueue}
-              >
-                <SkipBack className="h-4 w-4" />
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!hasNext}
-                onClick={goNextInQueue}
-              >
-                <SkipForward className="h-4 w-4" />
-              </Button>
-            </div>
-            <div className="max-h-[64vh] space-y-2 overflow-y-auto pr-1">
+            <div className="max-h-[64vh] space-y-1 overflow-y-auto pr-1">
               {queue.map((item, index) => (
                 <div
                   key={item.id}
@@ -543,11 +594,11 @@ export default function VideoPlayer() {
                   }}
                   onDragEnd={() => setDragFromIndex(null)}
                   onClick={() => playQueueIndex(index)}
-                  className={`flex cursor-pointer items-center gap-2 rounded-md p-1 transition-colors ${
-                    index === currentIndex ? "bg-secondary/80" : "hover:bg-secondary/60"
+                  className={`group flex cursor-pointer items-center gap-3 rounded-2xl p-1.5 transition-colors ${
+                    index === currentIndex ? "bg-white/[0.08] ring-1 ring-primary/40" : "hover:bg-white/[0.05]"
                   }`}
                 >
-                  <div className="relative h-16 w-28 shrink-0 overflow-hidden rounded-md bg-secondary">
+                  <div className="relative h-16 w-28 shrink-0 overflow-hidden rounded-xl bg-secondary">
                     <img
                       src={item.thumbnail_url || "/placeholder.svg"}
                       alt={item.title}
@@ -566,7 +617,10 @@ export default function VideoPlayer() {
                       {item.artist_name}
                     </p>
                     {index === currentIndex && (
-                      <p className="mt-0.5 text-[10px] font-semibold text-primary">Now playing</p>
+                      <p className="mt-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-primary">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                        Now playing
+                      </p>
                     )}
                   </div>
                   <div className="flex items-center gap-1 pr-1 text-muted-foreground">
@@ -595,7 +649,7 @@ export default function VideoPlayer() {
               {playStats.history.map((play) => (
                 <div
                   key={play.id}
-                  className="rounded-md border border-border px-3 py-2"
+                  className="surface px-4 py-3"
                 >
                   <p className="text-sm font-medium text-foreground">
                     {formatSeconds(play.watched_seconds)} watched
@@ -626,11 +680,10 @@ function InfoItem({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-3">
-      <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="h-3.5 w-3.5" /> {label}
-      </div>
-      <div className="text-sm font-medium text-foreground">{children}</div>
+    <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] py-1.5 pl-3 pr-4 text-sm" title={label}>
+      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="sr-only">{label}:</span>
+      <span className="font-medium text-foreground">{children}</span>
     </div>
   );
 }

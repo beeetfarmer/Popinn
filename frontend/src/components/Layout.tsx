@@ -13,7 +13,7 @@ export default function Layout() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <main className="flex-1 p-4 pb-24 sm:p-6 sm:pb-28">
+      <main className="mx-auto w-full max-w-[1800px] flex-1 px-4 pb-32 pt-4 sm:px-8 sm:pb-36 sm:pt-6">
         <AnimatePresence mode="wait">
           {outlet && cloneElement(outlet, { key: location.pathname })}
         </AnimatePresence>

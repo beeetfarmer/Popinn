@@ -12,6 +12,11 @@ import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import type { ArtistDetail as ArtistDetailType } from "@/data/mockData";
 import VideoCard from "@/components/VideoCard";
 import PageTransition from "@/components/PageTransition";
+import Reveal from "@/components/Reveal";
+import SectionHeader from "@/components/SectionHeader";
+import { ArtistGridSkeleton } from "@/components/Skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
+import { motion } from "framer-motion";
 import { ArrowLeft, Upload, Pencil, Play, Shuffle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -680,9 +685,18 @@ export default function ArtistDetail() {
   );
 
   if (!artist) {
-    if (isLoading) return <p className="text-muted-foreground">Loading artist...</p>;
-    if (isError) return <p className="text-destructive">Failed to load artist</p>;
-    return <p className="text-muted-foreground">Artist not found</p>;
+    if (isLoading)
+      return (
+        <div className="flex flex-col items-center gap-6 pt-16 sm:flex-row sm:items-end">
+          <Skeleton className="h-48 w-48 rounded-full" />
+          <div className="space-y-3">
+            <Skeleton className="h-14 w-72 rounded-xl" />
+            <Skeleton className="h-4 w-96 max-w-full" />
+          </div>
+        </div>
+      );
+    if (isError) return <p className="py-24 text-center text-destructive">Failed to load artist</p>;
+    return <p className="py-24 text-center text-muted-foreground">Artist not found</p>;
   }
 
   const totalPages = Math.max(1, Math.ceil(artist.videos.length / PER_PAGE));
@@ -707,81 +721,142 @@ export default function ArtistDetail() {
   return (
     <PageTransition>
       <div>
-        <Link
-          to="/artists"
-          className="mb-6 inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back to Artists
-        </Link>
-
-        {/* Header */}
-        <div className="mt-4 flex flex-col items-center gap-6 sm:flex-row sm:items-start">
-          {/* Drag & drop image area */}
-          <div
-            className={`relative h-40 w-40 shrink-0 overflow-hidden rounded-full border-2 transition-colors cursor-pointer ${
-              dragOver
-                ? "border-primary bg-primary/10"
-                : "border-primary hover:border-primary/70"
-            }`}
-            onDragOver={(e) => {
-              e.preventDefault();
-              if (isAdmin) setDragOver(true);
-            }}
-            onDragLeave={() => isAdmin && setDragOver(false)}
-            onDrop={isAdmin ? handleDrop : undefined}
-            onClick={isAdmin ? () => document.getElementById("artist-image-input")?.click() : undefined}
-            title={isAdmin ? "Drag & drop or click to change artist image" : "Artist image"}
-          >
+        {/* Banner: the artist photo, blurred wide, as stage lighting. */}
+        <section className="relative -mt-4 ml-[calc(50%-50vw)] mr-[calc(50%-50vw)] overflow-hidden sm:-mt-6">
+          {artist.image_url && (
             <img
-              src={artist.image_url || "/placeholder.svg"}
-              alt={artist.name}
-              className={`h-full w-full object-cover transition-opacity ${
-                dragOver || uploadImage.isPending ? "opacity-40" : ""
-              }`}
+              src={artist.image_url}
+              alt=""
+              aria-hidden
+              className="absolute inset-0 h-full w-full scale-125 object-cover opacity-50 blur-3xl saturate-150"
             />
-            {isAdmin && (
-              <>
-                <div
-                  className={`absolute inset-0 flex flex-col items-center justify-center transition-opacity ${
-                    dragOver || uploadImage.isPending ? "opacity-100" : "opacity-0 hover:opacity-100"
-                  }`}
-                >
-                  <div className="rounded-full bg-background/80 p-2">
-                    <Upload className="h-5 w-5 text-primary" />
-                  </div>
-                  <span className="mt-1 text-xs font-medium text-foreground">
-                    {uploadImage.isPending ? "Uploading..." : "Change Image"}
-                  </span>
-                </div>
-                <input
-                  id="artist-image-input"
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleFileSelect}
-                />
-              </>
-            )}
-          </div>
+          )}
+          <div className="absolute inset-0 bg-gradient-to-b from-background/30 via-background/60 to-background" />
+          <div className="relative mx-auto max-w-[1800px] px-4 pb-12 pt-6 sm:px-8 sm:pt-8">
+            <Link
+              to="/artists"
+              className="glass mb-10 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" /> Artists
+            </Link>
 
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-3xl font-bold text-foreground">{artist.name}</h1>
-              {isAdmin && (
-                <button
-                  onClick={openEdit}
-                  className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                  title="Edit artist"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-              )}
+            <div className="flex flex-col items-center gap-8 text-center sm:flex-row sm:items-end sm:text-left">
+              {/* Drag & drop image area */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+                className={`group relative h-44 w-44 shrink-0 overflow-hidden rounded-full shadow-[0_30px_80px_-20px_rgba(0,0,0,0.9)] ring-4 transition-all sm:h-56 sm:w-56 ${
+                  isAdmin ? "cursor-pointer" : ""
+                } ${dragOver ? "ring-primary" : "ring-white/10 hover:ring-white/20"}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (isAdmin) setDragOver(true);
+                }}
+                onDragLeave={() => isAdmin && setDragOver(false)}
+                onDrop={isAdmin ? handleDrop : undefined}
+                onClick={isAdmin ? () => document.getElementById("artist-image-input")?.click() : undefined}
+                title={isAdmin ? "Drag & drop or click to change artist image" : "Artist image"}
+              >
+                {artist.image_url ? (
+                  <img
+                    src={artist.image_url}
+                    alt={artist.name}
+                    className={`h-full w-full object-cover transition-opacity ${
+                      dragOver || uploadImage.isPending ? "opacity-40" : ""
+                    }`}
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-secondary to-muted">
+                    <span className="display text-7xl text-muted-foreground">
+                      {artist.name.trim().charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                )}
+                {isAdmin && (
+                  <>
+                    <div
+                      className={`absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity ${
+                        dragOver || uploadImage.isPending ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                      }`}
+                    >
+                      <Upload className="h-6 w-6 text-primary" />
+                      <span className="mt-2 text-xs font-medium text-foreground">
+                        {uploadImage.isPending ? "Uploading..." : "Change image"}
+                      </span>
+                    </div>
+                    <input
+                      id="artist-image-input"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleFileSelect}
+                    />
+                  </>
+                )}
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.7, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+                className="min-w-0"
+              >
+                <p className="eyebrow mb-2">Artist</p>
+                <div className="flex items-center justify-center gap-2 sm:justify-start">
+                  <h1 className="display text-5xl leading-none text-foreground sm:text-7xl lg:text-8xl">{artist.name}</h1>
+                  {isAdmin && (
+                    <button
+                      onClick={openEdit}
+                      className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                      title="Edit artist"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                <p className="mt-4 text-sm text-muted-foreground">
+                  <span className="text-foreground">{artist.videos.length}</span> music video{artist.videos.length !== 1 && "s"}
+                  <span className="mx-2 opacity-40">·</span>
+                  <span className="text-foreground">{artist.play_count || 0}</span> view{(artist.play_count || 0) !== 1 && "s"}
+                </p>
+                <div className="mt-6 flex flex-wrap justify-center gap-2 sm:justify-start">
+                  <Button size="lg" onClick={() => startArtistQueue(false)}>
+                    <Play className="h-4 w-4 fill-current" /> Play all
+                  </Button>
+                  <Button size="lg" variant="outline" onClick={() => startArtistQueue(true)}>
+                    <Shuffle className="h-4 w-4" /> Shuffle
+                  </Button>
+                  {isAdmin && (
+                    <Button size="lg" variant="ghost" onClick={openMetadataEditor}>
+                      Edit MV metadata
+                    </Button>
+                  )}
+                  {isAdmin && (
+                    <Button
+                      size="lg"
+                      variant="ghost"
+                      onClick={() => refreshMetadataMutation.mutate()}
+                      disabled={refreshMetadataMutation.isPending}
+                    >
+                      {refreshMetadataMutation.isPending ? "Refreshing..." : "Refresh info"}
+                    </Button>
+                  )}
+                </div>
+              </motion.div>
             </div>
-            <p className="mt-2 max-w-xl whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+          </div>
+        </section>
+
+        {/* Bio */}
+        {(parsedBio.body || parsedBio.lastfmUrl) && (
+          <Reveal className="mb-14 max-w-3xl">
+            <p className="eyebrow mb-3">About</p>
+            <p className="whitespace-pre-line text-[15px] leading-relaxed text-foreground/80">
               {parsedBio.body || "No artist bio available."}
             </p>
             {parsedBio.lastfmUrl && (
-              <p className="mt-2 text-xs text-muted-foreground">
+              <p className="mt-3 text-xs text-muted-foreground">
                 Artist information powered by Last.fm ·{" "}
                 <a
                   href={parsedBio.lastfmUrl}
@@ -793,40 +868,11 @@ export default function ArtistDetail() {
                 </a>
               </p>
             )}
-            <p className="mt-3 text-xs text-muted-foreground">
-              {artist.videos.length} music video{artist.videos.length !== 1 && "s"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {artist.play_count || 0} view{(artist.play_count || 0) !== 1 && "s"}
-            </p>
-            <div className="mt-3 flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => startArtistQueue(false)}>
-                <Play className="mr-1 h-4 w-4" /> Play All
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => startArtistQueue(true)}>
-                <Shuffle className="mr-1 h-4 w-4" /> Shuffle
-              </Button>
-              {isAdmin && (
-                <Button size="sm" variant="outline" onClick={openMetadataEditor}>
-                  Edit MV Metadata
-                </Button>
-              )}
-              {isAdmin && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => refreshMetadataMutation.mutate()}
-                  disabled={refreshMetadataMutation.isPending}
-                >
-                  {refreshMetadataMutation.isPending ? "Refreshing..." : "Refresh Info"}
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
+          </Reveal>
+        )}
 
-        <h2 className="mb-4 mt-10 text-xl font-bold text-foreground">Music Videos</h2>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <SectionHeader eyebrow="Discography" title="Music videos" />
+        <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
           {shownVideos.map((v) => (
             <VideoCard key={v.id} video={v} />
           ))}
@@ -834,7 +880,7 @@ export default function ArtistDetail() {
         {infiniteScroll && artist.videos.length > 0 && (
           <>
             <div ref={sentinelRef} aria-hidden className="h-px" />
-            <div className="mt-6 text-center text-sm text-muted-foreground">
+            <div className="mt-10 text-center text-sm text-muted-foreground">
               {canShowMore
                 ? `Showing ${shownVideos.length} of ${artist.videos.length}`
                 : `All ${artist.videos.length} videos loaded`}
@@ -842,20 +888,20 @@ export default function ArtistDetail() {
           </>
         )}
         {!infiniteScroll && artist.videos.length > PER_PAGE && (
-          <div className="mt-6 flex items-center justify-center gap-3">
+          <div className="glass mx-auto mt-10 flex w-fit items-center gap-2 rounded-full p-1.5">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               disabled={page === 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
               Previous
             </Button>
-            <span className="text-sm text-muted-foreground">
-              Page {page} of {totalPages}
+            <span className="px-3 text-sm tabular-nums text-muted-foreground">
+              Page <span className="text-foreground">{page}</span> of {totalPages}
             </span>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
@@ -864,15 +910,16 @@ export default function ArtistDetail() {
             </Button>
           </div>
         )}
-        <section className="mt-10 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-foreground">
-              Recommended Artists (Last.fm)
-            </h2>
+        <section className="mt-20 space-y-3">
+          <div className="flex items-end justify-between">
+            <div>
+              <p className="eyebrow mb-1.5">Similar on Last.fm</p>
+              <h2 className="display text-3xl text-foreground sm:text-4xl">Fans also like</h2>
+            </div>
             {artistRecommendations?.has_more && (
               <Button
                 size="sm"
-                variant="outline"
+                variant="ghost"
                 onClick={() => setArtistRecPage((prev) => prev + 1)}
               >
                 See more
@@ -880,31 +927,31 @@ export default function ArtistDetail() {
             )}
           </div>
           {artistRecommendationsLoading ? (
-            <p className="text-sm text-muted-foreground">Loading recommendations...</p>
+            <ArtistGridSkeleton count={6} />
           ) : artistRecommendations && artistRecommendations.items.length > 0 ? (
-            <div className="flex gap-3 overflow-x-auto pb-2">
+            <div className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-4 pt-2 scrollbar-none">
               {artistRecommendations.items.map((item) => (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => navigate(`/artist/${item.id}`)}
-                  className="w-64 shrink-0 rounded-xl p-4 text-center transition-colors hover:bg-secondary/40"
+                  className="group w-44 shrink-0 snap-start rounded-2xl p-3 text-center outline-none"
                 >
-                  <div className="mx-auto mb-3 h-40 w-40 overflow-hidden rounded-full bg-secondary">
+                  <div className="mx-auto mb-3 h-36 w-36 overflow-hidden rounded-full bg-secondary ring-1 ring-white/10 transition-all duration-500 group-hover:ring-2 group-hover:ring-primary/70">
                     {item.image_url ? (
                       <img
                         src={item.image_url}
                         alt={item.name}
-                        className="h-full w-full object-cover"
+                        className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
                         loading="lazy"
                       />
                     ) : (
-                      <div className="flex h-full w-full items-center justify-center text-xl font-semibold text-muted-foreground">
+                      <div className="display flex h-full w-full items-center justify-center text-5xl text-muted-foreground">
                         {item.name.slice(0, 1).toUpperCase()}
                       </div>
                     )}
                   </div>
-                  <p className="truncate text-sm font-semibold text-foreground">{item.name}</p>
+                  <p className="truncate text-sm font-medium text-foreground transition-colors group-hover:text-primary">{item.name}</p>
                   <p className="text-xs text-muted-foreground">
                     {item.video_count} video{item.video_count !== 1 ? "s" : ""}
                   </p>
@@ -937,7 +984,7 @@ export default function ArtistDetail() {
                   placeholder="Artist biography..."
                 />
               </div>
-              <div className="rounded-md border border-border p-3">
+              <div className="rounded-xl border border-white/10 p-3">
                 <label className="mb-1 block text-sm font-medium text-foreground">
                   Match Artist from Last.fm
                 </label>
@@ -963,7 +1010,7 @@ export default function ArtistDetail() {
                         key={item.url || item.name}
                         type="button"
                         onClick={() => applyLastfmArtistMatch(item.name)}
-                        className="w-full rounded-md border border-border px-2 py-1.5 text-left transition-colors hover:bg-secondary"
+                        className="w-full rounded-xl border border-white/10 px-2 py-1.5 text-left transition-colors hover:bg-white/[0.06]"
                       >
                         <p className="truncate text-xs font-semibold text-foreground">{item.name}</p>
                         {item.url && (
@@ -1083,7 +1130,7 @@ export default function ArtistDetail() {
                 </div>
                 <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
                   {metadataRows.map((row) => (
-                    <div key={row.videoId} className="rounded-lg border border-border p-3">
+                    <div key={row.videoId} className="rounded-2xl border border-white/10 p-3">
                       <p className="text-xs text-muted-foreground">
                         Original MV Name: <span className="font-medium text-foreground">{row.originalTitle}</span>
                       </p>
@@ -1109,7 +1156,7 @@ export default function ArtistDetail() {
                               key={item.spotify_track_id}
                               type="button"
                               onClick={() => applySpotifyMatch(row.videoId, item)}
-                              className="w-full rounded-md border border-border px-2 py-1.5 text-left transition-colors hover:bg-secondary"
+                              className="w-full rounded-xl border border-white/10 px-2 py-1.5 text-left transition-colors hover:bg-white/[0.06]"
                             >
                               <p className="truncate text-xs font-semibold text-foreground">{item.title}</p>
                               <p className="truncate text-[11px] text-muted-foreground">

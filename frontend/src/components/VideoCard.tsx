@@ -79,6 +79,7 @@ export default function VideoCard({ video }: VideoCardProps) {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [isHovered, setIsHovered] = useState(false);
+  const [thumbLoaded, setThumbLoaded] = useState(false);
   const [hoverPreviewEnabled] = useState(getStoredHoverPreviewEnabled);
   const [menuOpen, setMenuOpen] = useState(false);
   const [createWatchlistOpen, setCreateWatchlistOpen] = useState(false);
@@ -225,12 +226,12 @@ export default function VideoCard({ video }: VideoCardProps) {
   return (
     <>
       <div
-        className="group relative card-hover"
+        className="group relative"
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        <Link to={`/video/${video.id}`} className="block">
-          <div className="relative aspect-video overflow-hidden rounded-lg">
+        <Link to={`/video/${video.id}`} className="block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-primary/70">
+          <div className="relative aspect-video overflow-hidden rounded-xl bg-muted ring-1 ring-white/[0.06] transition-all duration-500 ease-out group-hover:-translate-y-1 group-hover:ring-white/20 group-hover:shadow-[0_20px_50px_-15px_rgba(0,0,0,0.9),0_0_40px_-12px_hsl(var(--primary)/0.35)]">
             {showHoverPreview ? (
               <video
                 src={hoverPreviewUrl || undefined}
@@ -245,28 +246,42 @@ export default function VideoCard({ video }: VideoCardProps) {
               <img
                 src={video.thumbnail_url || "/placeholder.svg"}
                 alt={video.title}
-                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
+                onLoad={() => setThumbLoaded(true)}
+                className={`h-full w-full object-cover transition-[transform,opacity] duration-700 ease-out group-hover:scale-105 ${
+                  thumbLoaded ? "opacity-100" : "opacity-0"
+                }`}
                 loading="lazy"
+                decoding="async"
               />
             )}
-            <div className="absolute inset-0 flex items-center justify-center bg-background/40 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-              <Play className="h-12 w-12 text-primary" fill="hsl(25 90% 55%)" />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/0 to-black/0 opacity-60 transition-opacity duration-500 group-hover:opacity-100" />
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <span className="flex h-12 w-12 scale-75 items-center justify-center rounded-full bg-primary text-primary-foreground opacity-0 shadow-[0_8px_30px_-4px_hsl(var(--primary)/0.8)] transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-100 group-hover:opacity-100">
+                <Play className="ml-0.5 h-5 w-5 fill-current" />
+              </span>
             </div>
-            <span className="absolute bottom-2 right-2 rounded bg-background/80 px-1.5 py-0.5 text-xs font-medium text-foreground">
-              {video.duration_display}
-            </span>
+            {video.duration_display && (
+              <span className="absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white backdrop-blur-md">
+                {video.duration_display}
+              </span>
+            )}
           </div>
-          <div className="mt-2 pr-8">
-            <h3 className="truncate text-sm font-semibold text-foreground">{video.title}</h3>
-            <p className="truncate text-xs text-muted-foreground">{video.artist_name}</p>
+          <div className="mt-3 px-0.5">
+            <h3 className="truncate text-sm font-medium text-foreground transition-colors group-hover:text-primary">
+              {video.title}
+            </h3>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{video.artist_name}</p>
           </div>
         </Link>
 
-        {/* 3-dot menu */}
-        <div className="absolute right-0 top-[calc(100%-2rem)]">
+        {/* 3-dot menu: on the thumbnail, revealed on hover (always on touch). */}
+        <div className="absolute right-2 top-2 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100 has-[[data-state=open]]:opacity-100 [@media(hover:none)]:opacity-100">
           <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger asChild>
-              <button className="rounded p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
+              <button
+                aria-label="Video options"
+                className="rounded-full bg-black/50 p-1.5 text-white/90 backdrop-blur-md transition-colors hover:bg-black/70 hover:text-white"
+              >
                 <MoreVertical className="h-4 w-4" />
               </button>
             </DropdownMenuTrigger>

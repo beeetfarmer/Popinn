@@ -3,11 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Music } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import AuthShell from "@/components/AuthShell";
 import { Input } from "@/components/ui/input";
 import {
   Form,
@@ -55,19 +54,11 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-            <Music className="h-6 w-6 text-primary" />
-          </div>
-          <CardTitle className="text-2xl">Create an account</CardTitle>
-        </CardHeader>
-        <CardContent>
+    <AuthShell title="Create an account" subtitle="Start building your music video library.">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               {error && (
-                <p className="text-sm text-destructive">{error}</p>
+                <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
               )}
               <FormField
                 control={form.control}
@@ -110,6 +101,7 @@ export default function RegisterPage() {
               />
               <Button
                 type="submit"
+                size="lg"
                 className="w-full"
                 disabled={form.formState.isSubmitting}
               >
@@ -117,14 +109,12 @@ export default function RegisterPage() {
               </Button>
             </form>
           </Form>
-          <p className="mt-4 text-center text-sm text-muted-foreground">
+          <p className="mt-6 text-center text-sm text-muted-foreground">
             Already have an account?{" "}
             <Link to="/login" className="text-primary hover:underline">
               Sign in
             </Link>
           </p>
-        </CardContent>
-      </Card>
-    </div>
+    </AuthShell>
   );
 }

@@ -177,19 +177,22 @@ export default function ProfileStatsRankingsPage() {
 
   return (
     <PageTransition>
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="mx-auto max-w-6xl space-y-8 pt-4">
         <Link
           to="/profile"
-          className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80"
+          className="glass inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" /> Back to Profile
         </Link>
 
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-foreground">Top Rankings</h1>
+          <div>
+            <p className="eyebrow mb-2">Your listening</p>
+            <h1 className="display text-5xl text-foreground sm:text-6xl">Top rankings</h1>
+          </div>
         </div>
 
-        <section className="rounded-xl border border-border bg-card p-4">
+        <section className="surface p-5 sm:p-6">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <Label>Start Date</Label>
@@ -222,16 +225,16 @@ export default function ProfileStatsRankingsPage() {
         </section>
 
         <section className="grid gap-3 lg:grid-cols-2">
-          <div className="rounded-xl border border-border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-foreground">
+          <div className="surface p-5 sm:p-6">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h2 className="display text-2xl text-foreground">
                 Top Artists ({topArtists.length})
               </h2>
               <Select
                 value={topArtistMetric}
                 onValueChange={(value) => setTopArtistMetric(value as TopArtistMetric)}
               >
-                <SelectTrigger className="h-8 w-[170px]">
+                <SelectTrigger className="h-8 w-[150px] text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -249,10 +252,10 @@ export default function ProfileStatsRankingsPage() {
                 {topArtists.map((artist, index) => (
                   <div
                     key={artist.id}
-                    className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 transition-colors hover:border-primary/35 hover:bg-secondary/20"
+                    className="group flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.05]"
                     onClick={() => navigate(`/artist/${artist.id}`)}
                   >
-                    <div className="h-10 w-10 overflow-hidden rounded-full bg-secondary">
+                    <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-secondary ring-1 ring-white/10">
                       {artistImageMap.get(artist.id) ? (
                         <img
                           src={artistImageMap.get(artist.id) || ""}
@@ -274,23 +277,23 @@ export default function ProfileStatsRankingsPage() {
                           : formatWatchTime(artist.watch_seconds)}
                       </p>
                     </div>
-                    <p className="text-xs font-medium text-muted-foreground">#{index + 1}</p>
+                    <p className="display w-8 text-right text-2xl text-muted-foreground/60 transition-colors group-hover:text-primary">{index + 1}</p>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          <div className="rounded-xl border border-border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-foreground">
+          <div className="surface p-5 sm:p-6">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h2 className="display text-2xl text-foreground">
                 Top Music Videos ({topVideos.length})
               </h2>
               <Select
                 value={topVideoMetric}
                 onValueChange={(value) => setTopVideoMetric(value as TopVideoMetric)}
               >
-                <SelectTrigger className="h-8 w-[170px]">
+                <SelectTrigger className="h-8 w-[150px] text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -310,10 +313,10 @@ export default function ProfileStatsRankingsPage() {
                   return (
                     <div
                       key={video.id}
-                      className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 transition-colors hover:border-primary/35 hover:bg-secondary/20"
+                      className="group flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.05]"
                       onClick={() => navigate(`/video/${video.id}`)}
                     >
-                      <div className="h-12 w-20 overflow-hidden rounded bg-secondary">
+                      <div className="h-12 w-20 shrink-0 overflow-hidden rounded-lg bg-secondary">
                         {fullVideo?.thumbnail_url ? (
                           <img
                             src={fullVideo.thumbnail_url}
@@ -338,7 +341,7 @@ export default function ProfileStatsRankingsPage() {
                             : formatWatchTime(video.watch_seconds)}
                         </p>
                       </div>
-                      <p className="text-xs font-medium text-muted-foreground">#{index + 1}</p>
+                      <p className="display w-8 text-right text-2xl text-muted-foreground/60 transition-colors group-hover:text-primary">{index + 1}</p>
                     </div>
                   );
                 })}

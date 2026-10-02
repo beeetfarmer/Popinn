@@ -1,47 +1,55 @@
+@import "@fontsource-variable/geist";
+@import "@fontsource/instrument-serif/400.css";
+@import "@fontsource/instrument-serif/400-italic.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  /* Cinematic dark. Near-black surfaces stay neutral so thumbnails and
+     artwork carry the color; one warm amber accent marks what is active. */
   :root {
-    --background: 220 20% 7%;
-    --foreground: 210 20% 92%;
+    --background: 240 6% 4%;
+    --foreground: 40 20% 96%;
 
-    --card: 220 18% 11%;
-    --card-foreground: 210 20% 92%;
+    --card: 240 5% 7%;
+    --card-foreground: 40 20% 96%;
 
-    --popover: 220 18% 13%;
-    --popover-foreground: 210 20% 92%;
+    --popover: 240 5% 8%;
+    --popover-foreground: 40 20% 96%;
 
-    --primary: 25 90% 55%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 32 95% 58%;
+    --primary-foreground: 240 6% 6%;
 
-    --secondary: 220 15% 16%;
-    --secondary-foreground: 210 20% 85%;
+    --secondary: 240 4% 12%;
+    --secondary-foreground: 40 15% 90%;
 
-    --muted: 220 15% 18%;
-    --muted-foreground: 215 15% 55%;
+    --muted: 240 4% 14%;
+    --muted-foreground: 240 5% 60%;
 
-    --accent: 25 80% 50%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 240 4% 14%;
+    --accent-foreground: 40 20% 96%;
 
-    --destructive: 0 72% 51%;
+    --destructive: 0 75% 58%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 220 15% 18%;
-    --input: 220 15% 20%;
-    --ring: 25 90% 55%;
+    --border: 240 4% 14%;
+    --input: 240 4% 16%;
+    --ring: 32 95% 58%;
 
-    --radius: 0.5rem;
+    --radius: 0.875rem;
 
-    --sidebar-background: 220 20% 9%;
-    --sidebar-foreground: 210 20% 80%;
-    --sidebar-primary: 25 90% 55%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 220 15% 14%;
-    --sidebar-accent-foreground: 210 20% 92%;
-    --sidebar-border: 220 15% 15%;
-    --sidebar-ring: 25 90% 55%;
+    --sidebar-background: 240 6% 5%;
+    --sidebar-foreground: 40 15% 85%;
+    --sidebar-primary: 32 95% 58%;
+    --sidebar-primary-foreground: 240 6% 6%;
+    --sidebar-accent: 240 4% 12%;
+    --sidebar-accent-foreground: 40 20% 96%;
+    --sidebar-border: 240 4% 12%;
+    --sidebar-ring: 32 95% 58%;
+
+    color-scheme: dark;
   }
 }
 
@@ -50,38 +58,133 @@
     @apply border-border;
   }
 
-  body {
-    @apply bg-background text-foreground;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  html {
+    /* Full-bleed sections size to 100vw, which includes the scrollbar. */
+    overflow-x: clip;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
-  /* Custom scrollbar */
+  body {
+    @apply bg-background font-sans text-foreground;
+    font-feature-settings: "ss01", "cv11";
+    /* Warm ambient light from the top edge, so the page never reads as a flat
+       black rectangle. Fixed so it stays put while long grids scroll. */
+    background-image:
+      radial-gradient(1200px 600px at 15% -10%, hsl(32 95% 58% / 0.07), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, hsl(280 60% 50% / 0.05), transparent 60%);
+    background-attachment: fixed;
+  }
+
+  /* Film grain over everything. Pure CSS (inline SVG noise), no request. */
+  body::before {
+    content: "";
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.35);
+    color: hsl(var(--foreground));
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
+
   ::-webkit-scrollbar {
-    width: 8px;
+    width: 10px;
+    height: 10px;
   }
   ::-webkit-scrollbar-track {
-    background: hsl(var(--background));
+    background: transparent;
   }
   ::-webkit-scrollbar-thumb {
     background: hsl(var(--muted));
-    border-radius: 4px;
+    border: 3px solid hsl(var(--background));
+    border-radius: 999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground));
+    background: hsl(var(--muted-foreground) / 0.6);
+  }
+}
+
+@layer components {
+  /* Large editorial headings. */
+  .display {
+    @apply font-display font-normal tracking-tight;
+    letter-spacing: -0.01em;
+  }
+
+  /* Small uppercase label above a heading or value. */
+  .eyebrow {
+    @apply text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground;
+  }
+
+  /* Frosted panel used by the dock, popovers and floating controls. */
+  .glass {
+    @apply border border-white/10 bg-white/[0.04] backdrop-blur-2xl;
+    box-shadow:
+      0 1px 0 0 hsl(0 0% 100% / 0.06) inset,
+      0 20px 50px -20px hsl(0 0% 0% / 0.8);
+  }
+
+  /* Quiet surface for content blocks (stats, settings sections). */
+  .surface {
+    @apply rounded-2xl border border-white/[0.06] bg-card/60;
+    box-shadow: 0 1px 0 0 hsl(0 0% 100% / 0.04) inset;
   }
 }
 
 @layer utilities {
   .glow-primary {
-    box-shadow: 0 0 20px hsl(25 90% 55% / 0.3);
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 10px 40px -10px hsl(var(--primary) / 0.55);
   }
   .text-gradient {
-    background: linear-gradient(135deg, hsl(25 90% 60%), hsl(35 95% 65%));
+    background: linear-gradient(135deg, hsl(40 100% 75%), hsl(28 95% 58%));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
+  /* Lift on hover. Kept as a utility because cards across pages share it. */
   .card-hover {
-    @apply transition-all duration-300 hover:scale-[1.03] hover:shadow-lg;
+    @apply transition-transform duration-500 ease-out will-change-transform hover:-translate-y-1;
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  /* Fades the edges of a horizontal rail so cards slide in from nothing. */
+  .mask-fade-x {
+    mask-image: linear-gradient(to right, transparent, black 2%, black 98%, transparent);
+  }
+}
+
+@keyframes hero-progress {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

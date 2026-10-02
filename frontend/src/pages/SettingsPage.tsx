@@ -19,6 +19,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import { transcodeProgressPercent } from "@/lib/transcode";
 import PageTransition from "@/components/PageTransition";
+import PageHeader from "@/components/PageHeader";
+import Reveal from "@/components/Reveal";
 import { toast } from "sonner";
 import { Trash2, Shield, Calendar, Loader2, CheckCircle2, XCircle, FolderSearch } from "lucide-react";
 
@@ -586,18 +588,23 @@ export default function SettingsPage() {
 
   return (
     <PageTransition>
-      <div className="mx-auto max-w-2xl space-y-8">
-        <div className="flex items-baseline justify-between gap-3">
-          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
-          <span className="text-xs text-muted-foreground">v{__APP_VERSION__}</span>
-        </div>
+      <div className="mx-auto max-w-3xl space-y-6">
+        <PageHeader
+          eyebrow="Preferences"
+          title="Settings"
+          actions={
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs tabular-nums text-muted-foreground">
+              v{__APP_VERSION__}
+            </span>
+          }
+        />
 
         {/* Library Scan */}
         {isAdmin && (
-          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <div className="flex items-center gap-2">
-              <FolderSearch className="h-5 w-5 text-primary" />
-              <h2 className="text-lg font-semibold text-foreground">Library Scan</h2>
+          <Reveal><section className="surface space-y-5 p-6 sm:p-8">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20"><FolderSearch className="h-5 w-5 text-primary" /></span>
+              <h2 className="display text-3xl text-foreground">Library Scan</h2>
             </div>
             <p className="text-sm text-muted-foreground">
               Scan your media directory for new artists, videos, and subtitles.
@@ -646,10 +653,10 @@ export default function SettingsPage() {
                     {cancellingScan ? "Cancelling..." : "Cancel Scan"}
                   </Button>
                 </div>
-                <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
                   {scanStatus?.folders_total && scanStatus.folders_total > 0 ? (
                     <div
-                      className="h-full rounded-full bg-primary transition-all duration-500"
+                      className="h-full rounded-full bg-gradient-to-r from-primary/60 to-primary shadow-[0_0_12px_hsl(var(--primary)/0.6)] transition-all duration-500"
                       style={{
                         width: `${Math.min(
                           100,
@@ -725,11 +732,11 @@ export default function SettingsPage() {
 
             {/* Artist metadata refresh progress */}
             {artistMetadataScanning && (
-              <div className="space-y-2 rounded-lg border border-border p-3">
-                <div className="h-2 overflow-hidden rounded-full bg-secondary">
+              <div className="space-y-2 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
                   {artistMetadataStatus?.folders_total && artistMetadataStatus.folders_total > 0 ? (
                     <div
-                      className="h-full rounded-full bg-primary transition-all duration-500"
+                      className="h-full rounded-full bg-gradient-to-r from-primary/60 to-primary shadow-[0_0_12px_hsl(var(--primary)/0.6)] transition-all duration-500"
                       style={{
                         width: `${Math.min(
                           100,
@@ -797,12 +804,12 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
-          </section>
+          </section></Reveal>
         )}
 
         {isAdmin && (
-          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <h2 className="text-lg font-semibold text-foreground">Library Runtime Settings</h2>
+          <Reveal><section className="surface space-y-5 p-6 sm:p-8">
+            <h2 className="display text-3xl text-foreground">Library Runtime Settings</h2>
             {runtimeLoading ? (
               <p className="text-sm text-muted-foreground">Loading runtime settings...</p>
             ) : (
@@ -911,7 +918,7 @@ export default function SettingsPage() {
                     onChange={(e) =>
                       setMetadataProvider(e.target.value === "musicbrainz" ? "musicbrainz" : "spotify")
                     }
-                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                    className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3.5 text-sm text-foreground"
                   >
                     <option value="spotify" disabled={!spotifyConfigured}>
                       Spotify{spotifyConfigured ? "" : " (credentials not configured)"}
@@ -942,13 +949,13 @@ export default function SettingsPage() {
                 </div>
               </>
             )}
-          </section>
+          </section></Reveal>
         )}
 
         {isAdmin && (
-          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+          <Reveal><section className="surface space-y-5 p-6 sm:p-8">
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-foreground">Transcoding</h2>
+              <h2 className="display text-3xl text-foreground">Transcoding</h2>
               <p className="text-sm text-muted-foreground">
                 Formats browsers cannot play directly (MKV, AVI, MOV) need an HLS
                 rendition before they will play. Transcoding runs in the background.
@@ -972,21 +979,21 @@ export default function SettingsPage() {
                 )}
 
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-2xl font-semibold text-foreground">
+                  <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+                    <p className="display text-4xl leading-none text-foreground">
                       {transcodeStatus.needs_transcode}
                     </p>
                     <p className="text-xs text-muted-foreground">Need transcoding</p>
                   </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-2xl font-semibold text-foreground">
+                  <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+                    <p className="display text-4xl leading-none text-foreground">
                       {transcodeStatus.transcoded}
                     </p>
                     <p className="text-xs text-muted-foreground">Transcoded</p>
                   </div>
-                  <div className="rounded-lg border border-border p-3">
+                  <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
                     <p
-                      className={`text-2xl font-semibold ${
+                      className={`display text-4xl leading-none ${
                         transcodePending > 0 ? "text-amber-500" : "text-foreground"
                       }`}
                     >
@@ -998,10 +1005,10 @@ export default function SettingsPage() {
 
                 {transcodeRunActive && transcodeRun && (
                   <div className="space-y-2">
-                    <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
                       {transcodeRun.total > 0 ? (
                         <div
-                          className="h-full rounded-full bg-primary transition-all duration-500"
+                          className="h-full rounded-full bg-gradient-to-r from-primary/60 to-primary shadow-[0_0_12px_hsl(var(--primary)/0.6)] transition-all duration-500"
                           style={{
                             width: `${transcodeProgressPercent(
                               transcodeRun.processed,
@@ -1085,13 +1092,13 @@ export default function SettingsPage() {
                 </div>
               </>
             )}
-          </section>
+          </section></Reveal>
         )}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {/* Playback */}
-          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <h2 className="text-lg font-semibold text-foreground">Playback &amp; Notifications</h2>
+          <Reveal><section className="surface space-y-5 p-6 sm:p-8">
+            <h2 className="display text-3xl text-foreground">Playback &amp; Notifications</h2>
             <div className="flex items-center justify-between">
               <Label htmlFor="autoplay">Autoplay next video</Label>
               <Switch id="autoplay" checked={autoplay} onCheckedChange={setAutoplay} />
@@ -1106,7 +1113,7 @@ export default function SettingsPage() {
                     e.target.value === "genre" ? "genre" : "lastfm"
                   )
                 }
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3.5 text-sm text-foreground"
               >
                 <option value="lastfm">Last.fm similar tracks</option>
                 <option value="genre">Same genre in library</option>
@@ -1132,12 +1139,12 @@ export default function SettingsPage() {
               <Label htmlFor="notif">Enable notifications</Label>
               <Switch id="notif" checked={notifications} onCheckedChange={setNotifications} />
             </div>
-          </section>
+          </section></Reveal>
 
           {/* Backup & Restore */}
           {isAdmin && (
-            <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-              <h2 className="text-lg font-semibold text-foreground">Backup & Restore</h2>
+            <Reveal><section className="surface space-y-5 p-6 sm:p-8">
+              <h2 className="display text-3xl text-foreground">Backup & Restore</h2>
               <p className="text-sm text-muted-foreground">
                 Export and import settings plus playback history for migrations to another server with the same media files.
               </p>
@@ -1167,16 +1174,16 @@ export default function SettingsPage() {
                   }}
                 />
               </div>
-            </section>
+            </section></Reveal>
           )}
         </div>
 
         {/* Admin: User Management */}
         {isAdmin && (
-          <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-            <div className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-primary" />
-              <h2 className="text-lg font-semibold text-foreground">User Management</h2>
+          <Reveal><section className="surface space-y-5 p-6 sm:p-8">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20"><Shield className="h-5 w-5 text-primary" /></span>
+              <h2 className="display text-3xl text-foreground">User Management</h2>
             </div>
             <p className="text-sm text-muted-foreground">
               Manage registered users. Only admins can see this section.
@@ -1192,7 +1199,7 @@ export default function SettingsPage() {
               {users.map((u) => (
                 <div
                   key={u.id}
-                  className="flex items-center gap-4 rounded-lg border border-border p-3"
+                  className="flex items-center gap-4 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -1218,7 +1225,7 @@ export default function SettingsPage() {
                       onClick={() => {
                         setPendingDeleteUser(u);
                       }}
-                      className="rounded p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                      className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -1226,7 +1233,7 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
-          </section>
+          </section></Reveal>
         )}
       </div>
 

@@ -118,7 +118,7 @@ const Carousel = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivEl
         <div
           ref={ref}
           onKeyDownCapture={handleKeyDown}
-          className={cn("relative", className)}
+          className={cn("group/carousel relative", className)}
           role="region"
           aria-roledescription="carousel"
           {...props}
@@ -136,7 +136,7 @@ const CarouselContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HT
     const { carouselRef, orientation } = useCarousel();
 
     return (
-      <div ref={carouselRef} className="overflow-hidden">
+      <div ref={carouselRef} className="-my-4 overflow-hidden py-4">
         <div
           ref={ref}
           className={cn("flex", orientation === "horizontal" ? "-ml-4" : "-mt-4 flex-col", className)}
@@ -175,7 +175,7 @@ const CarouselPrevious = React.forwardRef<HTMLButtonElement, React.ComponentProp
         variant={variant}
         size={size}
         className={cn(
-          "absolute h-8 w-8 rounded-full",
+          "absolute z-10 h-11 w-11 rounded-full border-white/10 bg-black/60 text-foreground shadow-xl backdrop-blur-xl transition-all duration-300 hover:scale-105 hover:bg-black/80 hover:text-foreground disabled:pointer-events-none disabled:opacity-0 hidden md:inline-flex md:opacity-0 md:group-hover/carousel:opacity-100 md:group-hover/carousel:disabled:opacity-0",
           orientation === "horizontal"
             ? "-left-12 top-1/2 -translate-y-1/2"
             : "-top-12 left-1/2 -translate-x-1/2 rotate-90",
@@ -203,7 +203,7 @@ const CarouselNext = React.forwardRef<HTMLButtonElement, React.ComponentProps<ty
         variant={variant}
         size={size}
         className={cn(
-          "absolute h-8 w-8 rounded-full",
+          "absolute z-10 h-11 w-11 rounded-full border-white/10 bg-black/60 text-foreground shadow-xl backdrop-blur-xl transition-all duration-300 hover:scale-105 hover:bg-black/80 hover:text-foreground disabled:pointer-events-none disabled:opacity-0 hidden md:inline-flex md:opacity-0 md:group-hover/carousel:opacity-100 md:group-hover/carousel:disabled:opacity-0",
           orientation === "horizontal"
             ? "-right-12 top-1/2 -translate-y-1/2"
             : "-bottom-12 left-1/2 -translate-x-1/2 rotate-90",
