@@ -41,6 +41,10 @@ const DropdownMenuSubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
 >(({ className, ...props }, ref) => (
+  // Portalled: the parent menu's backdrop-blur makes it the containing block
+  // for fixed descendants, so an inline submenu was positioned inside it and
+  // clipped by its overflow-hidden -- "Add to Watchlist" showed nothing.
+  <DropdownMenuPrimitive.Portal>
   <DropdownMenuPrimitive.SubContent
     ref={ref}
     className={cn(
@@ -49,6 +53,7 @@ const DropdownMenuSubContent = React.forwardRef<
     )}
     {...props}
   />
+  </DropdownMenuPrimitive.Portal>
 ));
 DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName;
 
