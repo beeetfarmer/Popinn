@@ -37,7 +37,7 @@ export default function Index() {
 
   const { data: artists = [], isLoading: artistsLoading, isError: artistsError } = useQuery<Artist[]>({
     queryKey: ["artists"],
-    queryFn: () => api.get("/artists/?limit=200"),
+    queryFn: () => api.get("/artists/?limit=2000"),
   });
 
   const recentVideos = useMemo(
