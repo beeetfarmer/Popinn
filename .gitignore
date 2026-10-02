@@ -93,3 +93,8 @@ frontend/bun.lockb
 # ...except the published documentation, which has to ship with the repo.
 !README.md
 !docs/**
+
+# Local shadcn MCP tooling (not part of the app)
+/.mcp.json
+/package.json
+/package-lock.json
