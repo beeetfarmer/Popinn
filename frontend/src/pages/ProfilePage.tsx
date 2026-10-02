@@ -574,8 +574,8 @@ export default function ProfilePage() {
                 </button>
               </div>
               <p className="mt-2 text-sm text-muted-foreground">{user?.email}</p>
-              <div className="mt-2 flex items-center justify-center gap-3 text-xs capitalize text-muted-foreground sm:justify-start">
-                <span className="flex items-center gap-1">
+              <div className="mt-2 flex items-center justify-center gap-3 text-xs text-muted-foreground sm:justify-start">
+                <span className="flex items-center gap-1 capitalize">
                   <Shield className="h-3 w-3" />
                   {user?.role}
                 </span>
