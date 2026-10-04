@@ -35,7 +35,7 @@ frontend/
 └── package.json
 
 deploy/docker/nginx/   nginx config for the web image
-.github/workflows/     CI
+.forgejo/workflows/    CI
 ```
 
 ---
@@ -154,69 +154,69 @@ production CVE reports without changing a line of application code.
 
 ## CI
 
-Three workflows, all pinned to action SHAs rather than tags.
+CI runs on Forgejo Actions. GitHub is a push mirror of the Forgejo repository
+and runs nothing. Jobs run on a self-hosted runner with the `docker` label,
+each in its own container.
 
-**`security-audit.yml`** is the shared gate, called by the other two so they can
-never drift apart. It runs Gitleaks, Semgrep, Checkov, `pip-audit`, `npm audit`,
-frontend typecheck and tests, Trivy against both built images, and SBOM
-generation.
+**`dev.yml`** runs on every push to `dev` and every pull request into `dev`:
+Gitleaks, Semgrep, Checkov, `pip-audit`, `npm audit`, frontend typecheck and
+tests, then both images are built and scanned with Trivy and thrown away.
+Pushes that only touch documentation (`*.md`, `docs/`, `LICENSE`) are skipped.
 
-**`dev-gate.yml`** runs the gate on every push to `dev`, and nothing else.
-Promotion to `main` is manual and deliberate.
+**`release.yml`** runs on pushes to `main` and on `v*` tags. It repeats every
+check job from `dev.yml` unchanged, then builds, scans, prints an SBOM, and
+publishes both images to Docker Hub. Nothing is pushed unless every check passes.
 
-**`main-release.yml`** runs on pushes to `main` and on `v*` tags: the gate again
-against the merged tree, then publish to Docker Hub.
+**`github-release.yml`** copies a release published on Forgejo to the GitHub
+mirror, with the same tag, title and notes.
 
-Both gate workflows begin with a `changes` job that classifies the push. If
-every changed path is documentation (`*.md`, `docs/`, `LICENSE`), the scans and
-the rebuild are skipped. A commit touching a `README` *and* a `Dockerfile` still
-runs everything — the filter can only ever skip changes that cannot affect an
-image.
+Check that the check jobs in `dev.yml` and `release.yml` still match before
+pushing changes to either file:
 
-This is a job-level filter rather than `on.push.paths-ignore` for two reasons:
-the merge into `main` lives inside `dev-gate.yml`, so a trigger-level skip would
-mean docs never reached `main` at all; and trigger-level path filters also apply
-to tag pushes, where "changed files" is not meaningful and could silently skip a
-release.
+```bash
+python3 - <<'PY'
+import yaml
+dev = yaml.safe_load(open(".forgejo/workflows/dev.yml"))["jobs"]
+rel = yaml.safe_load(open(".forgejo/workflows/release.yml"))["jobs"]
+drift = [j for j in dev if j != "image" and dev[j] != rel.get(j)]
+assert not drift, f"release.yml checks differ from dev.yml: {drift}"
+assert set(rel["publish"]["needs"]) == set(dev) - {"image"}, "publish must wait for every check"
+print("release checks match dev checks")
+PY
+```
 
-**Required repository secrets**
+**Required Actions secrets** (Forgejo repository → Settings → Actions)
 
 | Secret | Purpose |
 | --- | --- |
 | `DOCKERHUB_USERNAME` | Docker Hub account |
-| `DOCKERHUB_TOKEN` | Docker Hub access token |
+| `DOCKERHUB_TOKEN` | Docker Hub access token, Read & Write |
+| `GH_RELEASE_TOKEN` | GitHub fine-grained token for this repository, Contents: Read and write |
 
-Each is checked by an explicit verification step that fails with a clear message
-rather than a confusing downstream error.
+Each is checked by an explicit step that fails with a clear message rather than
+a confusing downstream error.
 
 ---
 
 ## Releasing
 
-Work lands on `dev`, where every push runs the gate. Nothing reaches `main` or
+Work lands on `dev`, where every push runs the checks. Nothing reaches `main` or
 Docker Hub until you promote it.
 
-**1. Promote dev to main.** Open a pull request and merge it once the gate is
-green:
+**1. Promote dev to main** once the dev checks are green:
 
 ```bash
-gh pr create --base main --head dev --title "Release: dev -> main" --fill
+git switch main && git merge --ff-only dev && git push origin main
+git switch dev
 ```
 
-Merging is an ordinary push to `main`, so `main-release.yml` re-runs the gate
-against the merged tree and publishes `edge` and `<sha>`.
-
-`main` used to advance automatically on every `dev` push. That meant it could
-hold a half-finished change, and it needed a PAT (`MAIN_PUSH_TOKEN`) because
-GitHub does not trigger workflows from pushes made with `GITHUB_TOKEN`. Merging
-a PR yourself needs no token, so that secret is gone.
+`release.yml` re-runs the checks against `main` and publishes `edge` and `<sha>`.
 
 **2. Tag the release.** The git tag is the source of truth; nothing reads a
 version from a file.
 
 ```bash
-git checkout main && git pull
-git tag v0.1.0
+git tag -a v0.1.0 main -m "Popinn 0.1.0"
 git push origin v0.1.0
 ```
 
@@ -238,8 +238,11 @@ publishing nothing quietly.
 Normal pushes to `main` publish only `edge` and `<sha>`, so version tags stay
 pinned to what they were released as.
 
-The rolling channel is `edge` rather than `latest` on purpose. `dev-gate.yml`
-auto-merges `dev` into `main`, so a push to `main` is every commit, not every
-release — calling that `latest` would break the one assumption everyone makes
-about that tag, and break it silently: you would pull a half-finished refactor
+**3. Publish the release.** Once the tag's release run is green, create a
+release from that tag on Forgejo. `github-release.yml` creates the same release
+on GitHub.
+
+The rolling channel is `edge` rather than `latest` on purpose. A push to `main`
+can carry several unreleased commits, so it is not a release. Calling that
+`latest` would break the one assumption everyone makes about that tag, and break it silently: you would pull a half-finished refactor
 with no way to tell. Self-hosters can therefore use `latest` and get releases.
