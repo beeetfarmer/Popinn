@@ -2,6 +2,8 @@ export interface Artist {
   id: string;
   name: string;
   lastfm_artist_name?: string | null;
+  wikipedia_url?: string | null;
+  spotify_artist_id?: string | null;
   bio: string | null;
   image_url: string | null;
   video_count: number;

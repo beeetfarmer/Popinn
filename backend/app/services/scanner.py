@@ -13,9 +13,10 @@ from app.models.artist import Artist
 from app.models.subtitle import Subtitle, SubtitleFormat
 from app.models.video import Video
 from app.services.file_times import file_created_at
-from app.services.lastfm import (
-    fetch_artist_info,
-    is_lastfm_attributed_bio,
+from app.services.artist_metadata import fetch_artist_metadata, is_fetched_bio
+from app.services.runtime_settings import (
+    get_effective_artist_bio_sources_sync,
+    get_effective_artist_image_sources_sync,
 )
 from app.services.media_assets import delete_video_assets
 from app.services.metadata import (
@@ -469,6 +470,8 @@ def run_scan(
     os.makedirs(preview_dir, exist_ok=True)
 
     with session_factory() as session:
+        bio_sources = get_effective_artist_bio_sources_sync(session)
+        image_sources = get_effective_artist_image_sources_sync(session)
         try:
             artist_entries = []
             for entry in sorted(os.scandir(media_path), key=lambda e: e.name):
@@ -506,9 +509,10 @@ def run_scan(
                         has_real_image = os.path.getsize(artist.image_path) > 10_000
                 needs_image = not has_real_image
 
-                # External URLs are considered Last.fm-managed images in this flow.
+                # External URLs are source-managed (Deezer, Wikipedia, Last.fm)
+                # images; local files are uploads.
                 is_lastfm_image = bool(artist.image_path and is_external_url(artist.image_path))
-                bio_is_lastfm = is_lastfm_attributed_bio(artist.bio)
+                bio_is_lastfm = is_fetched_bio(artist.bio)
                 ttl_hours = max(1, int(lastfm_cache_ttl_hours))
                 now_utc = datetime.now(timezone.utc)
                 cache_stale = (
@@ -516,8 +520,8 @@ def run_scan(
                     or artist.lastfm_fetched_at <= now_utc - timedelta(hours=ttl_hours)
                 )
 
-                # Refresh Last.fm metadata if missing or stale; stale third-party data is not kept forever.
-                should_refresh_lastfm = bool(lastfm_api_key) and (
+                # Refresh metadata if missing or stale; stale third-party data is not kept forever.
+                should_refresh_lastfm = bool(bio_sources or image_sources) and (
                     is_new
                     or needs_image
                     or not artist.bio
@@ -525,13 +529,19 @@ def run_scan(
                 )
 
                 if should_refresh_lastfm:
-                    lookup_name = (artist.lastfm_artist_name or artist_name).strip()
-                    info = fetch_artist_info(lookup_name, lastfm_api_key)
+                    info = fetch_artist_metadata(
+                        artist_name,
+                        lastfm_name=artist.lastfm_artist_name,
+                        wikipedia_url=artist.wikipedia_url,
+                        lastfm_api_key=lastfm_api_key,
+                        bio_sources=bio_sources,
+                        image_sources=image_sources,
+                    )
                     if info:
                         fetched_bio = info.get("bio")
                         fetched_image_url = info.get("image_url")
-                        canonical_name = (info.get("artist_name") or lookup_name).strip()
-                        artist.lastfm_artist_name = canonical_name
+                        artist.lastfm_artist_name = info.get("lastfm_artist_name")
+                        artist.wikipedia_url = info.get("wikipedia_url")
 
                         if fetched_bio and (not artist.bio or bio_is_lastfm or cache_stale):
                             artist.bio = info["bio"]
@@ -678,13 +688,12 @@ def refresh_artist_metadata(
     progress_callback: ScanProgressCallback | None = None,
     should_cancel: CancelCheckCallback | None = None,
 ) -> ScanResult:
-    """Refresh artist bio + image metadata from Last.fm for existing artists."""
+    """Refresh artist bio + image metadata from the configured sources for existing artists."""
     result = ScanResult()
-    if not lastfm_api_key:
-        result.errors.append("Last.fm API key is not configured")
-        return result
 
     with session_factory() as session:
+        bio_sources = get_effective_artist_bio_sources_sync(session)
+        image_sources = get_effective_artist_image_sources_sync(session)
         try:
             artists = (
                 session.execute(
@@ -706,8 +715,14 @@ def refresh_artist_metadata(
                 if progress_callback:
                     progress_callback(total, idx, artist.name, processed_count, updated_count)
 
-                lookup_name = (artist.lastfm_artist_name or artist.name).strip()
-                info = fetch_artist_info(lookup_name, lastfm_api_key)
+                info = fetch_artist_metadata(
+                    artist.name,
+                    lastfm_name=artist.lastfm_artist_name,
+                    wikipedia_url=artist.wikipedia_url,
+                    lastfm_api_key=lastfm_api_key,
+                    bio_sources=bio_sources,
+                    image_sources=image_sources,
+                )
                 processed_count += 1
                 result.files_found = processed_count
 
@@ -715,11 +730,10 @@ def refresh_artist_metadata(
                     changed = False
                     fetched_bio = info.get("bio")
                     fetched_image_url = info.get("image_url")
-                    canonical_name = (info.get("artist_name") or lookup_name).strip()
-
-                    if artist.lastfm_artist_name != canonical_name:
-                        artist.lastfm_artist_name = canonical_name
-                        changed = True
+                    for attr in ("lastfm_artist_name", "wikipedia_url"):
+                        if info.get(attr) and getattr(artist, attr) != info[attr]:
+                            setattr(artist, attr, info[attr])
+                            changed = True
 
                     if fetched_bio and artist.bio != fetched_bio:
                         artist.bio = fetched_bio

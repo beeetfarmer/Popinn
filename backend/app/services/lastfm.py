@@ -20,6 +20,24 @@ LASTFM_LINK_PREFIX = "Last.fm:"
 # It's a 4KB star/placeholder PNG. We must detect and skip it.
 LASTFM_PLACEHOLDER_HASH = "2a96cbd8b46e442fc41c2b86b821562f"
 
+# From 1 December 2026 Last.fm only serves API keys whose owning account has
+# Last.fm Pro. A key without it is answered with error 10 (invalid key) or
+# 26 (suspended key).
+LASTFM_KEY_REFUSED_CODES = {10, 26}
+LASTFM_PRO_REQUIRED_MESSAGE = (
+    "Last.fm refused the API key. Since 1 December 2026 Last.fm requires the "
+    "account that owns the API key to have a Last.fm Pro subscription."
+)
+
+# ponytail: in-process flag, fine for the single uvicorn worker; move to the
+# settings table if the backend ever runs more than one process.
+_key_refused = False
+
+
+def lastfm_key_refused() -> bool:
+    """True if the most recent Last.fm call was refused for the API key."""
+    return _key_refused
+
 
 def _normalize_image_url(value: str | None) -> str | None:
     if not value:
@@ -102,12 +120,13 @@ def _request_json_with_retries(
     timeout_seconds: float,
     rate_bucket: str,
     context: str,
+    headers: dict | None = None,
 ) -> dict | None:
     for attempt in range(_retry_attempts()):
         rate_limiter.wait(rate_bucket, "global", settings.LASTFM_API_RATE_LIMIT)
         try:
             with httpx.Client(timeout=timeout_seconds) as client:
-                resp = client.get(url, params=params)
+                resp = client.get(url, params=params, headers=headers)
         except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as exc:
             if attempt < _retry_attempts() - 1:
                 logger.warning(
@@ -138,6 +157,14 @@ def _request_json_with_retries(
             return None
 
         if resp.status_code >= 400:
+            # Last.fm sends its error JSON ({"error": 10, ...}) with a 4xx
+            # status; hand it back so the caller can read the code.
+            try:
+                body = resp.json()
+            except ValueError:
+                body = None
+            if isinstance(body, dict) and body.get("error") is not None:
+                return body
             logger.warning("%s failed with status %s.", context, resp.status_code)
             return None
 
@@ -150,7 +177,31 @@ def _request_json_with_retries(
     return None
 
 
-def _fetch_deezer_image_url(artist_name: str) -> str | None:
+def _lastfm_get(params: dict, context: str) -> dict | None:
+    global _key_refused
+    data = _request_json_with_retries(
+        url=LASTFM_API_URL,
+        params=params,
+        timeout_seconds=15,
+        rate_bucket="lastfm_api",
+        context=context,
+    )
+    if data is None:
+        return None
+    try:
+        code = int(data["error"]) if data.get("error") is not None else None
+    except (TypeError, ValueError):
+        code = -1
+    if code in LASTFM_KEY_REFUSED_CODES:
+        if not _key_refused:
+            logger.warning("%s: %s (%s)", context, LASTFM_PRO_REQUIRED_MESSAGE, data.get("message"))
+        _key_refused = True
+    elif code is None:
+        _key_refused = False
+    return data
+
+
+def fetch_deezer_image_url(artist_name: str) -> str | None:
     # Last.fm stopped serving artist images through its API in 2019, and its
     # artist pages now answer non-browser clients with a bot challenge, so the
     # og:image scrape that used to fill the gap returns nothing. Deezer's search
@@ -284,8 +335,7 @@ def fetch_similar_artists(
     *,
     limit: int = 100,
 ) -> list[dict]:
-    data = _request_json_with_retries(
-        url=LASTFM_API_URL,
+    data = _lastfm_get(
         params={
             "method": "artist.getsimilar",
             "artist": artist_name,
@@ -294,8 +344,6 @@ def fetch_similar_artists(
             "autocorrect": 1,
             "limit": max(1, min(limit, 200)),
         },
-        timeout_seconds=15,
-        rate_bucket="lastfm_api",
         context=f"Last.fm artist.getsimilar ({artist_name})",
     )
     if not data:
@@ -328,8 +376,7 @@ def search_artists(
     *,
     limit: int = 10,
 ) -> list[dict]:
-    data = _request_json_with_retries(
-        url=LASTFM_API_URL,
+    data = _lastfm_get(
         params={
             "method": "artist.search",
             "artist": query,
@@ -337,8 +384,6 @@ def search_artists(
             "format": "json",
             "limit": max(1, min(limit, 50)),
         },
-        timeout_seconds=15,
-        rate_bucket="lastfm_api",
         context=f"Last.fm artist.search ({query})",
     )
     if not data:
@@ -380,8 +425,7 @@ def fetch_similar_tracks(
     *,
     limit: int = 100,
 ) -> list[dict]:
-    data = _request_json_with_retries(
-        url=LASTFM_API_URL,
+    data = _lastfm_get(
         params={
             "method": "track.getsimilar",
             "track": track_name,
@@ -391,8 +435,6 @@ def fetch_similar_tracks(
             "autocorrect": 1,
             "limit": max(1, min(limit, 200)),
         },
-        timeout_seconds=15,
-        rate_bucket="lastfm_api",
         context=f"Last.fm track.getsimilar ({artist_name} - {track_name})",
     )
     if not data:
@@ -429,18 +471,19 @@ def fetch_similar_tracks(
 
 
 def fetch_artist_info(artist_name: str, api_key: str) -> dict | None:
-    """Fetch artist bio and image URL from Last.fm with attribution-compliant bio output."""
+    """Fetch artist bio and image URL from Last.fm with attribution-compliant bio output.
+
+    Only Last.fm: other sources (Deezer, Wikipedia) are combined in
+    artist_metadata.fetch_artist_metadata by the configured priority.
+    """
     try:
-        data = _request_json_with_retries(
-            url=LASTFM_API_URL,
+        data = _lastfm_get(
             params={
                 "method": "artist.getinfo",
                 "artist": artist_name,
                 "api_key": api_key,
                 "format": "json",
             },
-            timeout_seconds=15,
-            rate_bucket="lastfm_api",
             context=f"Last.fm artist.getinfo ({artist_name})",
         )
         if not data:
@@ -484,10 +527,6 @@ def fetch_artist_info(artist_name: str, api_key: str) -> dict | None:
                 image_url = _normalize_image_url(matched.get("image_url"))
                 if matched.get("name"):
                     canonical_name = str(matched["name"]).strip() or canonical_name
-        if not image_url:
-            image_url = _fetch_deezer_image_url(canonical_name)
-        if not image_url and canonical_name != artist_name:
-            image_url = _fetch_deezer_image_url(artist_name)
 
         bio_with_attribution = add_lastfm_attribution(bio_content or None, canonical_name)
         return {

@@ -100,6 +100,8 @@ class VideoRecommendationsPage(BaseModel):
     offset: int
     limit: int
     has_more: bool
+    # Why the list is empty when the cause is upstream, e.g. Last.fm refusing the key.
+    notice: str | None = None
 
 
 class TranscodeRunStatus(BaseModel):

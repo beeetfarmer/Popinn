@@ -46,6 +46,7 @@ interface VideoRecommendationsPage {
   offset: number;
   limit: number;
   has_more: boolean;
+  notice?: string | null;
 }
 
 interface ViewThresholdSettings {
@@ -543,7 +544,7 @@ export default function VideoPlayer() {
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  No recommendations available yet.
+                  {recommendations?.notice || "No recommendations available yet."}
                 </p>
               )}
             </section>

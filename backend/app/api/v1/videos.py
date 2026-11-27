@@ -31,7 +31,12 @@ from app.schemas.video import (
     VideoUpdate,
 )
 from app.services.background_jobs import submit_job
-from app.services.lastfm import fetch_similar_tracks, normalize_for_match
+from app.services.lastfm import (
+    LASTFM_PRO_REQUIRED_MESSAGE,
+    fetch_similar_tracks,
+    lastfm_key_refused,
+    normalize_for_match,
+)
 from app.services.media_assets import delete_video_assets
 from app.services.metadata import playlist_is_complete
 from app.services.path_urls import to_public_asset_url
@@ -415,7 +420,11 @@ async def get_video_recommendations(
         items=items,
         offset=offset,
         limit=limit,
-        has_more=offset + limit < total,
+        has_more=offset + limit < total,        notice=(
+            LASTFM_PRO_REQUIRED_MESSAGE
+            if source == "lastfm" and not items and lastfm_key_refused()
+            else None
+        ),
     )
 
 

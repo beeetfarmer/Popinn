@@ -13,6 +13,16 @@ SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES = "lastfm_override_local_artist_imag
 SETTING_VIDEO_INFINITE_SCROLL = "video_infinite_scroll"
 SETTING_LIBRARY_SCAN_INTERVAL_MINUTES = "library_scan_interval_minutes"
 SETTING_METADATA_PROVIDER = "metadata_provider"
+SETTING_ARTIST_BIO_SOURCES = "artist_bio_sources"
+SETTING_ARTIST_IMAGE_SOURCES = "artist_image_sources"
+
+# Artist bio/image sources, as comma-separated lists in priority order. A source
+# left out of the list is disabled. Spotify images are only displayed, never
+# stored, so they are resolved per request (see artists API).
+ARTIST_BIO_SOURCES = ("wikipedia", "lastfm")
+ARTIST_IMAGE_SOURCES = ("spotify", "deezer", "wikipedia", "lastfm")
+DEFAULT_ARTIST_BIO_SOURCES = "wikipedia,lastfm"
+DEFAULT_ARTIST_IMAGE_SOURCES = "deezer,wikipedia,lastfm"
 
 METADATA_PROVIDERS = ("spotify", "musicbrainz")
 
@@ -25,6 +35,16 @@ def _to_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_source_order(value: str | None, allowed: tuple[str, ...], default: str) -> list[str]:
+    raw = default if value is None else value
+    order: list[str] = []
+    for item in raw.split(","):
+        item = item.strip().lower()
+        if item in allowed and item not in order:
+            order.append(item)
+    return order
 
 
 def _to_ratio(
@@ -163,3 +183,23 @@ def get_effective_lastfm_override_local_artist_images_sync(session: Session) -> 
         "true",
     )
     return _to_bool(value, default=True)
+
+
+async def get_effective_artist_bio_sources(db: AsyncSession) -> list[str]:
+    value = await get_setting_value(db, SETTING_ARTIST_BIO_SOURCES)
+    return parse_source_order(value, ARTIST_BIO_SOURCES, DEFAULT_ARTIST_BIO_SOURCES)
+
+
+async def get_effective_artist_image_sources(db: AsyncSession) -> list[str]:
+    value = await get_setting_value(db, SETTING_ARTIST_IMAGE_SOURCES)
+    return parse_source_order(value, ARTIST_IMAGE_SOURCES, DEFAULT_ARTIST_IMAGE_SOURCES)
+
+
+def get_effective_artist_bio_sources_sync(session: Session) -> list[str]:
+    value = get_setting_value_sync(session, SETTING_ARTIST_BIO_SOURCES)
+    return parse_source_order(value, ARTIST_BIO_SOURCES, DEFAULT_ARTIST_BIO_SOURCES)
+
+
+def get_effective_artist_image_sources_sync(session: Session) -> list[str]:
+    value = get_setting_value_sync(session, SETTING_ARTIST_IMAGE_SOURCES)
+    return parse_source_order(value, ARTIST_IMAGE_SOURCES, DEFAULT_ARTIST_IMAGE_SOURCES)

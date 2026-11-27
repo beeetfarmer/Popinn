@@ -152,7 +152,7 @@ artist biographies or artwork.
 
 | Variable | Description |
 | --- | --- |
-| `LASTFM_API_KEY` | Artist biographies and images. Free key from <https://www.last.fm/api/account/create>. |
+| `LASTFM_API_KEY` | Artist biographies, similar artists and tracks. Key from <https://www.last.fm/api/account/create>; from 1 December 2026 the account that owns it needs Last.fm Pro, or Last.fm refuses it (error 10 or 26) and Popinn shows a notice. |
 | `LASTFM_CACHE_TTL_HOURS` | How long artist metadata is cached before it is eligible for refresh. Default `168` (one week). |
 | `SPOTIFY_CLIENT_ID` | Track metadata lookup |
 | `SPOTIFY_CLIENT_SECRET` | Track metadata lookup. Credentials from <https://developer.spotify.com/dashboard>. Since February 2026, a development-mode app requires its owner to hold an active **Spotify Premium** subscription or the API stops working. |
@@ -209,7 +209,9 @@ apply immediately, with no restart.
 | `media_path` | Overrides the media path. Only editable when `ALLOW_RUNTIME_PATH_CHANGES=true`. |
 | `app_data_path` | Overrides the app-data path. Same restriction. |
 | `view_threshold_ratio` | Overrides `VIEW_THRESHOLD_RATIO` |
-| `lastfm_override_local_artist_images` | Whether fetched Last.fm artwork replaces images you uploaded yourself |
+| `lastfm_override_local_artist_images` | Whether fetched artwork (including Spotify) replaces images you uploaded yourself |
+| `artist_bio_sources` | Artist bio sources in priority order, comma-separated: `wikipedia`, `lastfm`. Leaving a source out disables it. Default `wikipedia,lastfm`. Wikipedia bios are the first two paragraphs of the article. |
+| `artist_image_sources` | Artist image sources in priority order: `spotify`, `deezer`, `wikipedia`, `lastfm`. Default `deezer,wikipedia,lastfm`. Spotify images are shown live and never stored; ranked first, they replace every other image. Needs Spotify credentials. |
 | `metadata_provider` | Which service backs track metadata search: `spotify` or `musicbrainz`. Defaults to Spotify when its credentials are configured, otherwise MusicBrainz. |
 | `library_scan_interval_minutes` | Minutes between automatic library scans (`0` disables it). Overrides `LIBRARY_SCAN_INTERVAL_MINUTES`. |
 
