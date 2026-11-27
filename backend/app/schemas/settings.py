@@ -18,6 +18,10 @@ class SettingUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+BioSource = Literal["wikipedia", "lastfm"]
+ImageSource = Literal["spotify", "deezer", "wikipedia", "lastfm"]
+
+
 class RuntimeSettingsRead(BaseModel):
     media_path: str
     app_data_path: str
@@ -28,6 +32,10 @@ class RuntimeSettingsRead(BaseModel):
     library_scan_interval_minutes: int = Field(0, ge=0, le=10080)
     metadata_provider: Literal["spotify", "musicbrainz"] = "spotify"
     spotify_configured: bool = False
+    lastfm_key_refused: bool = False
+    # Priority order; a source left out is disabled.
+    artist_bio_sources: list[BioSource] = []
+    artist_image_sources: list[ImageSource] = []
 
 
 class RuntimeSettingsUpdate(BaseModel):
@@ -39,6 +47,9 @@ class RuntimeSettingsUpdate(BaseModel):
     video_infinite_scroll: bool = False
     library_scan_interval_minutes: int = Field(0, ge=0, le=10080)
     metadata_provider: Literal["spotify", "musicbrainz"] = "spotify"
+    # None keeps the current order.
+    artist_bio_sources: list[BioSource] | None = Field(None, max_length=2)
+    artist_image_sources: list[ImageSource] | None = Field(None, max_length=4)
     model_config = ConfigDict(extra="forbid")
 
 

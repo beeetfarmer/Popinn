@@ -1,0 +1,49 @@
+name: Copy release to GitHub
+
+# A release published here is created on the GitHub mirror with the same tag, title and notes.
+# If the push mirror has not synced the tag yet, GitHub creates it on the same commit.
+# Secret GH_RELEASE_TOKEN: a GitHub fine-grained token for beeetfarmer/Popinn with Contents: Read and write.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  github:
+    name: Create GitHub release
+    runs-on: docker
+    container:
+      image: docker.io/library/python:3.13-trixie
+    env:
+      GH_REPO: beeetfarmer/Popinn
+      GH_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
+      TAG: ${{ github.event.release.tag_name }}
+      NAME: ${{ github.event.release.name }}
+      BODY: ${{ github.event.release.body }}
+      PRERELEASE: ${{ github.event.release.prerelease }}
+      TARGET: ${{ github.event.release.target_commitish }}
+    steps:
+      - name: Create release
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.request, urllib.error
+          e = os.environ
+          if not e.get("GH_TOKEN"):
+              sys.exit("Set the GH_RELEASE_TOKEN secret")
+          release = {
+              "tag_name": e["TAG"],
+              "target_commitish": e.get("GITHUB_SHA") or e["TARGET"],
+              "name": e["NAME"] or e["TAG"],
+              "body": e["BODY"],
+              "prerelease": e["PRERELEASE"] == "true",
+          }
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{e['GH_REPO']}/releases",
+              data=json.dumps(release).encode(),
+              headers={"Authorization": f"Bearer {e['GH_TOKEN']}", "Accept": "application/vnd.github+json"},
+          )
+          try:
+              print("Created", json.load(urllib.request.urlopen(req))["html_url"])
+          except urllib.error.HTTPError as err:
+              sys.exit(f"GitHub said {err.code}: {err.read().decode()}")
+          PY

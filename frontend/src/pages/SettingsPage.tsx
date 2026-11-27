@@ -22,7 +22,7 @@ import PageTransition from "@/components/PageTransition";
 import PageHeader from "@/components/PageHeader";
 import Reveal from "@/components/Reveal";
 import { toast } from "sonner";
-import { Trash2, Shield, Calendar, Loader2, CheckCircle2, XCircle, FolderSearch } from "lucide-react";
+import { Trash2, Shield, Calendar, Loader2, CheckCircle2, XCircle, FolderSearch, ChevronUp, ChevronDown } from "lucide-react";
 
 interface UserItem {
   id: string;
@@ -58,6 +58,99 @@ interface RuntimeSettings {
   video_infinite_scroll: boolean;
   metadata_provider: "spotify" | "musicbrainz";
   spotify_configured: boolean;
+  lastfm_key_refused: boolean;
+  artist_bio_sources: BioSource[];
+  artist_image_sources: ImageSource[];
+}
+
+type BioSource = "wikipedia" | "lastfm";
+type ImageSource = "spotify" | "deezer" | "wikipedia" | "lastfm";
+
+interface SourceOption<T extends string> {
+  id: T;
+  label: string;
+  hint?: string;
+  unavailable?: boolean;
+}
+
+// Enabled sources in priority order, with the disabled ones listed after them.
+function SourcePriorityList<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: SourceOption<T>[];
+  value: T[];
+  onChange: (next: T[]) => void;
+}) {
+  const ordered = [
+    ...value.map((id) => options.find((o) => o.id === id)).filter((o): o is SourceOption<T> => !!o),
+    ...options.filter((o) => !value.includes(o.id)),
+  ];
+  const move = (index: number, delta: number) => {
+    const next = [...value];
+    [next[index], next[index + delta]] = [next[index + delta], next[index]];
+    onChange(next);
+  };
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <ol className="space-y-1.5">
+        {ordered.map((option) => {
+          const index = value.indexOf(option.id);
+          const enabled = index !== -1;
+          return (
+            <li
+              key={option.id}
+              className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2"
+            >
+              <span className="w-5 text-xs tabular-nums text-muted-foreground">
+                {enabled ? index + 1 : "–"}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className={`text-sm ${enabled ? "text-foreground" : "text-muted-foreground"}`}>
+                  {option.label}
+                </p>
+                {option.hint && <p className="text-xs text-muted-foreground">{option.hint}</p>}
+              </div>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                aria-label={`Move ${option.label} up`}
+                disabled={!enabled || index === 0}
+                onClick={() => move(index, -1)}
+              >
+                <ChevronUp className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                aria-label={`Move ${option.label} down`}
+                disabled={!enabled || index === value.length - 1}
+                onClick={() => move(index, 1)}
+              >
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+              <Switch
+                aria-label={`Use ${option.label}`}
+                checked={enabled}
+                disabled={!enabled && option.unavailable}
+                onCheckedChange={(on) =>
+                  onChange(on ? [...value, option.id] : value.filter((id) => id !== option.id))
+                }
+              />
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
 }
 
 interface TranscodeRunStatus {
@@ -184,6 +277,8 @@ export default function SettingsPage() {
   const [libraryScanIntervalMinutes, setLibraryScanIntervalMinutes] = useState(0);
   const [metadataProvider, setMetadataProvider] = useState<"spotify" | "musicbrainz">("spotify");
   const [spotifyConfigured, setSpotifyConfigured] = useState(false);
+  const [artistBioSources, setArtistBioSources] = useState<BioSource[]>([]);
+  const [artistImageSources, setArtistImageSources] = useState<ImageSource[]>([]);
   const [pendingDeleteUser, setPendingDeleteUser] = useState<UserItem | null>(null);
   const [cancelTranscodeOpen, setCancelTranscodeOpen] = useState(false);
 
@@ -224,6 +319,8 @@ export default function SettingsPage() {
     setLibraryScanIntervalMinutes(runtimeSettings.library_scan_interval_minutes);
     setMetadataProvider(runtimeSettings.metadata_provider);
     setSpotifyConfigured(runtimeSettings.spotify_configured);
+    setArtistBioSources(runtimeSettings.artist_bio_sources);
+    setArtistImageSources(runtimeSettings.artist_image_sources);
   }, [runtimeSettings]);
 
   const runtimeMutation = useMutation({
@@ -237,12 +334,17 @@ export default function SettingsPage() {
         video_infinite_scroll: videoInfiniteScroll,
         library_scan_interval_minutes: libraryScanIntervalMinutes,
         metadata_provider: metadataProvider,
+        artist_bio_sources: artistBioSources,
+        artist_image_sources: artistImageSources,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runtime-settings"] });
       // Video lists read this to decide how they paginate, so they have to be
       // told it changed or they keep their old behaviour until a reload.
       queryClient.invalidateQueries({ queryKey: ["browsing-settings"] });
+      // Artist image URLs depend on the image source priority.
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      queryClient.invalidateQueries({ queryKey: ["artist"] });
       toast.success("Runtime settings saved");
     },
     onError: (error: unknown) =>
@@ -857,14 +959,54 @@ export default function SettingsPage() {
                     A playback counts as a view after this watch percentage. Playback history still records every session.
                   </p>
                 </div>
+                <SourcePriorityList
+                  label="Artist bio sources"
+                  options={[
+                    { id: "wikipedia", label: "Wikipedia", hint: "First two paragraphs of the article" },
+                    { id: "lastfm", label: "Last.fm" },
+                  ]}
+                  value={artistBioSources}
+                  onChange={setArtistBioSources}
+                />
+                <div className="space-y-1">
+                  <SourcePriorityList
+                    label="Artist image sources"
+                    options={[
+                      {
+                        id: "spotify",
+                        label: "Spotify",
+                        hint: spotifyConfigured
+                          ? "Shown live, never saved. Ranked first, it replaces every other image."
+                          : "Needs Spotify credentials on the server",
+                        unavailable: !spotifyConfigured,
+                      },
+                      { id: "deezer", label: "Deezer" },
+                      { id: "wikipedia", label: "Wikipedia" },
+                      { id: "lastfm", label: "Last.fm" },
+                    ]}
+                    value={artistImageSources}
+                    onChange={setArtistImageSources}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Saved sources are fetched during scans and artist refreshes; the first one with a result wins.
+                  </p>
+                </div>
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
                     <Label htmlFor="lastfm-override-local-artist-images">
-                      Override local artist images on Last.fm update
+                      Override local artist images on metadata update
                     </Label>
                     <p className="text-xs text-muted-foreground">
-                      If enabled, Last.fm refresh can replace manually uploaded local artist images.
+                      If enabled, fetched images (including Spotify) can replace manually uploaded local artist images.
                     </p>
+                    <p className="text-xs text-muted-foreground">
+                      From 1 December 2026 Last.fm only answers API requests if the account that owns the API key has Last.fm Pro.
+                    </p>
+                    {runtimeSettings?.lastfm_key_refused && (
+                      <p role="alert" className="text-xs text-destructive">
+                        Last.fm is refusing the configured API key. Artist info, search and recommendations from Last.fm will not work until the key owner has Last.fm Pro.
+                      </p>
+                    )}
                   </div>
                   <Switch
                     id="lastfm-override-local-artist-images"

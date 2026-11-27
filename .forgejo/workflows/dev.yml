@@ -1,0 +1,126 @@
+name: Dev checks
+
+# Every push to dev and every pull request into dev. The image job runs only after every check passes.
+# The check jobs are repeated unchanged in release.yml, so a release can never skip a check dev ran.
+# Runner: label "docker", with the container engine socket handed to jobs (container.docker_host).
+
+on:
+  push:
+    branches: [dev]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: dev-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CHECKOUT_TOKEN: ${{ github.token }}
+
+jobs:
+  backend:
+    name: Backend CVE and IaC scans
+    runs-on: docker
+    container:
+      image: docker.io/library/python:3.13-trixie    # same Python and Debian release as backend/Dockerfile
+    steps:
+      - name: Checkout
+        run: |
+          git config --global --add safe.directory "$PWD"
+          git init -q . && git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git -c "http.extraheader=Authorization: token $CHECKOUT_TOKEN" fetch -q --depth=1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+      - name: Install tools
+        run: pip install -q --root-user-action=ignore pip-audit checkov
+      - name: Dependency audit
+        run: pip-audit -r backend/requirements.txt --strict
+      - name: Scan compose files and Dockerfiles
+        run: checkov --quiet -f docker-compose.dev.yml -f docker-compose.prod.yml -f backend/Dockerfile -f frontend/Dockerfile
+
+  frontend:
+    name: Frontend types, tests, audit
+    runs-on: docker
+    container:
+      image: docker.io/library/node:26-trixie
+    steps:
+      - name: Checkout
+        run: |
+          git config --global --add safe.directory "$PWD"
+          git init -q . && git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git -c "http.extraheader=Authorization: token $CHECKOUT_TOKEN" fetch -q --depth=1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+      - name: Install
+        run: npm ci --no-fund --prefix frontend
+      # vite build uses SWC, which strips types without checking them, so the typecheck has to be its own step.
+      - name: Typecheck
+        run: npx --prefix frontend tsc --noEmit --project frontend/tsconfig.json
+      - name: Tests
+        run: npm test --prefix frontend
+      - name: Dependency audit
+        run: npm audit --prefix frontend --omit=dev --audit-level=high
+
+  sast:
+    name: Semgrep
+    runs-on: docker
+    container:
+      image: docker.io/semgrep/semgrep:1.178.0
+    steps:
+      - name: Checkout
+        run: |
+          git config --global --add safe.directory "$PWD"
+          git init -q . && git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git -c "http.extraheader=Authorization: token $CHECKOUT_TOKEN" fetch -q --depth=1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+      - name: Scan
+        run: >
+          semgrep scan --metrics off --error --config p/owasp-top-ten
+          --exclude-rule python.lang.security.audit.md5-used-as-password.md5-used-as-password
+          --exclude-rule python.lang.security.insecure-hash-algorithms-md5.insecure-hash-algorithm-md5
+
+  secrets:
+    name: Gitleaks
+    runs-on: docker
+    container:
+      image: docker.io/zricethezav/gitleaks:v8.30.1
+    steps:
+      - name: Checkout full history
+        run: |
+          git config --global --add safe.directory "$PWD"
+          git init -q . && git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git -c "http.extraheader=Authorization: token $CHECKOUT_TOKEN" fetch -q origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+      - name: Scan history
+        run: gitleaks git . --redact --exit-code 1
+
+  image:
+    name: Docker build and Trivy scan
+    needs: [backend, frontend, sast, secrets]
+    runs-on: docker
+    container:
+      image: docker.io/library/docker:28-cli
+    steps:
+      - name: Install git
+        run: apk add --no-cache git
+      - name: Checkout
+        run: |
+          git config --global --add safe.directory "$PWD"
+          git init -q . && git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git -c "http.extraheader=Authorization: token $CHECKOUT_TOKEN" fetch -q --depth=1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+      - name: Build
+        # --load: with Podman, the build otherwise stays in BuildKit's cache and the scan finds no image.
+        run: |
+          docker build --load -f backend/Dockerfile -t "popinn-backend:ci-$GITHUB_RUN_NUMBER" .
+          docker build --load -f frontend/Dockerfile --target prod -t "popinn-web:ci-$GITHUB_RUN_NUMBER" .
+      - name: Scan images (fail on fixable HIGH or CRITICAL)
+        # Streamed in, never through a mounted socket: works the same with Docker and rootless Podman.
+        run: |
+          for image in backend web; do
+            docker save "popinn-$image:ci-$GITHUB_RUN_NUMBER" | docker run --rm -i --entrypoint sh docker.io/aquasec/trivy:0.74.0 \
+              -c 'cat > /tmp/image.tar && trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --input /tmp/image.tar'
+          done
+      - name: Remove images
+        if: always()
+        run: docker image rm -f "popinn-backend:ci-$GITHUB_RUN_NUMBER" "popinn-web:ci-$GITHUB_RUN_NUMBER" || true

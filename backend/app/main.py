@@ -200,7 +200,11 @@ async def request_context_and_security_headers(request: Request, call_next):
                 identifier=client_identifier,
                 limit=settings.RATE_LIMIT_SPOTIFY_SEARCH,
             )
-        elif path == "/api/v1/artists/lastfm/search":
+        elif path in (
+            "/api/v1/artists/lastfm/search",
+            "/api/v1/artists/wikipedia/search",
+            "/api/v1/artists/spotify/search",
+        ):
             await _enforce_rate_limit(
                 bucket="lastfm_search",
                 identifier=client_identifier,

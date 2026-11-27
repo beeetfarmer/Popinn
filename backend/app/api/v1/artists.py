@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,27 +23,44 @@ from app.schemas.artist import (
     ArtistDetailRead,
     LastfmArtistApplyRequest,
     LastfmArtistSearchItem,
+    SpotifyArtistApplyRequest,
+    SpotifyArtistSearchItem,
     ArtistRead,
     ArtistRecommendationRead,
     ArtistRecommendationsPage,
     ArtistUpdate,
+    WikipediaArticleApplyRequest,
+    WikipediaArticleSearchItem,
 )
 from app.schemas.video import VideoRead
 from app.services.lastfm import (
-    fetch_artist_info,
+    LASTFM_PRO_REQUIRED_MESSAGE,
+    lastfm_key_refused,
     fetch_similar_artists,
     normalize_for_match,
     parse_lastfm_artist_url,
     search_artists,
 )
+from app.services.artist_metadata import fetch_artist_metadata
 from app.services.path_urls import is_external_url, to_public_asset_url
 from app.services.runtime_settings import (
     get_effective_app_data_path,
+    get_effective_artist_bio_sources,
+    get_effective_artist_image_sources,
     get_effective_lastfm_override_local_artist_images,
     get_effective_media_path,
     get_effective_transcoding_enabled,
+    spotify_configured,
+)
+from app.services.spotify import (
+    SpotifyServiceError,
+    find_artist_image_url,
+    get_artist as get_spotify_artist,
+    parse_spotify_artist_id,
+    search_artists as search_spotify_artists,
 )
 from app.services.stream_tokens import sign_stream_url_for_user
+from app.services.wikipedia import fetch_article, parse_wikipedia_url, search_articles
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +107,76 @@ def _asset_url(
         cache_bust=cache_bust,
         signer=signer,
     )
+
+
+# (spotify enabled, spotify ranked first, uploads may be overridden)
+ArtistImageDisplay = tuple[bool, bool, bool]
+
+
+async def _artist_image_display(db: AsyncSession) -> ArtistImageDisplay:
+    sources = await get_effective_artist_image_sources(db)
+    return (
+        "spotify" in sources and spotify_configured(),
+        bool(sources) and sources[0] == "spotify",
+        await get_effective_lastfm_override_local_artist_images(db),
+    )
+
+
+def _artist_image_url(
+    artist: Artist,
+    media_root: str,
+    app_data_root: str,
+    user_id: uuid.UUID,
+    display: ArtistImageDisplay,
+) -> str | None:
+    """Public image URL for an artist, honouring the image source priority.
+
+    Spotify images are never stored, so when Spotify should win the URL points
+    at a redirect that looks the image up at view time. Spotify wins when it is
+    ranked first (over an upload only if uploads may be overridden), or when
+    it is enabled at all and nothing is stored.
+    """
+    stored = _asset_url(artist.image_path, media_root, app_data_root, cache_bust=True, user_id=user_id)
+    spotify, spotify_first, override_local = display
+    if spotify and (
+        stored is None
+        or (spotify_first and (override_local or is_external_url(artist.image_path)))
+    ):
+        # The pin is in the URL so browsers drop their cached redirect when it changes.
+        return f"/api/v1/artists/{artist.id}/spotify-image?v={artist.spotify_artist_id or 'name'}"
+    return stored
+
+
+async def _fetch_metadata(
+    db: AsyncSession,
+    artist: Artist,
+    *,
+    lastfm_name: str | None,
+    wikipedia_url: str | None,
+    bio_sources: list[str] | None = None,
+) -> dict | None:
+    return await asyncio.to_thread(
+        fetch_artist_metadata,
+        artist.name.strip(),
+        lastfm_name=lastfm_name,
+        wikipedia_url=wikipedia_url,
+        lastfm_api_key=settings.LASTFM_API_KEY.strip(),
+        bio_sources=bio_sources if bio_sources is not None else await get_effective_artist_bio_sources(db),
+        image_sources=await get_effective_artist_image_sources(db),
+    )
+
+
+def _apply_metadata(artist: Artist, info: dict, override_local_images: bool) -> None:
+    if info.get("bio"):
+        artist.bio = info["bio"]
+    image_url = info.get("image_url")
+    if image_url and (
+        override_local_images or not artist.image_path or is_external_url(artist.image_path)
+    ):
+        artist.image_path = image_url
+    artist.lastfm_artist_name = info.get("lastfm_artist_name") or artist.lastfm_artist_name
+    artist.wikipedia_url = info.get("wikipedia_url") or artist.wikipedia_url
+    artist.lastfm_fetched_at = datetime.now(timezone.utc)
 
 
 def _hls_playlist_url(
@@ -161,25 +249,30 @@ async def list_artists(
     result = await db.execute(query)
     rows = result.all()
     media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
     app_data_root = await get_effective_app_data_path(db)
     return [
         ArtistRead(
             id=artist.id,
             name=artist.name,
             lastfm_artist_name=artist.lastfm_artist_name,
+            wikipedia_url=artist.wikipedia_url,
+            spotify_artist_id=artist.spotify_artist_id,
             bio=artist.bio,
-            image_url=_asset_url(
-                artist.image_path,
-                media_root,
-                app_data_root,
-                cache_bust=True,
-                user_id=_user.id,
-            ),
+            image_url=_artist_image_url(artist, media_root, app_data_root, _user.id, image_display),
             video_count=count,
             created_at=artist.created_at,
         )
         for artist, count in rows
     ]
+
+
+def _raise_if_lastfm_key_refused() -> None:
+    if lastfm_key_refused():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=LASTFM_PRO_REQUIRED_MESSAGE,
+        )
 
 
 @router.get("/lastfm/search", response_model=list[LastfmArtistSearchItem])
@@ -195,6 +288,8 @@ async def search_lastfm_artists(
             detail="Last.fm integration is not configured on the server",
         )
     results = await asyncio.to_thread(search_artists, q, api_key, limit=limit)
+    if not results:
+        _raise_if_lastfm_key_refused()
     return [
         LastfmArtistSearchItem(
             name=item.get("name", ""),
@@ -204,6 +299,191 @@ async def search_lastfm_artists(
         for item in results
         if item.get("name")
     ]
+
+
+@router.get("/wikipedia/search", response_model=list[WikipediaArticleSearchItem])
+async def search_wikipedia_articles(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(10, ge=1, le=20),
+    _admin: User = Depends(get_current_admin),
+):
+    results = await asyncio.to_thread(search_articles, q, limit=limit)
+    return [WikipediaArticleSearchItem(**item) for item in results]
+
+
+@router.post("/{artist_id}/wikipedia/apply", response_model=ArtistRead)
+async def apply_wikipedia_article(
+    artist_id: uuid.UUID,
+    body: WikipediaArticleApplyRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Use a specific Wikipedia article (picked from search or pasted) for the bio."""
+    artist = await db.scalar(
+        select(Artist).where(Artist.id == artist_id, Artist.deleted_at.is_(None))
+    )
+    if not artist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
+    if not parse_wikipedia_url(body.wikipedia_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "That does not look like a Wikipedia article link. Expected "
+                "something like https://en.wikipedia.org/wiki/Artist_Name"
+            ),
+        )
+    article = await asyncio.to_thread(fetch_article, body.wikipedia_url)
+    if not article or not article.get("bio"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No usable article found at that link (missing, empty or a disambiguation page)",
+        )
+
+    # The admin picked this article, so the bio comes from it; images still
+    # follow the configured priority.
+    info = await _fetch_metadata(
+        db,
+        artist,
+        lastfm_name=artist.lastfm_artist_name,
+        wikipedia_url=article["url"],
+        bio_sources=["wikipedia"],
+    )
+    override_local_images = await get_effective_lastfm_override_local_artist_images(db)
+    _apply_metadata(artist, info or article, override_local_images)
+    artist.wikipedia_url = article["url"]
+    await db.commit()
+    await db.refresh(artist)
+
+    count_result = await db.execute(
+        select(func.count(Video.id)).where(Video.artist_id == artist.id, Video.deleted_at.is_(None))
+    )
+    media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
+    app_data_root = await get_effective_app_data_path(db)
+    return ArtistRead(
+        id=artist.id,
+        name=artist.name,
+        lastfm_artist_name=artist.lastfm_artist_name,
+        wikipedia_url=artist.wikipedia_url,
+        spotify_artist_id=artist.spotify_artist_id,
+        bio=artist.bio,
+        image_url=_artist_image_url(artist, media_root, app_data_root, admin.id, image_display),
+        video_count=count_result.scalar() or 0,
+        created_at=artist.created_at,
+    )
+
+
+def _require_spotify() -> None:
+    if not spotify_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Spotify integration is not configured on the server",
+        )
+
+
+@router.get("/spotify/search", response_model=list[SpotifyArtistSearchItem])
+async def search_spotify_artist_matches(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(10, ge=1, le=20),
+    _admin: User = Depends(get_current_admin),
+):
+    _require_spotify()
+    try:
+        results = await search_spotify_artists(q, limit=limit)
+    except SpotifyServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return [SpotifyArtistSearchItem(**item) for item in results]
+
+
+@router.post("/{artist_id}/spotify/apply", response_model=ArtistRead)
+async def apply_spotify_artist(
+    artist_id: uuid.UUID,
+    body: SpotifyArtistApplyRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pin the Spotify artist whose image is displayed, or clear the pin."""
+    artist = await db.scalar(
+        select(Artist).where(Artist.id == artist_id, Artist.deleted_at.is_(None))
+    )
+    if not artist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
+
+    raw = (body.spotify_artist or "").strip()
+    if raw:
+        _require_spotify()
+        spotify_id = parse_spotify_artist_id(raw)
+        if not spotify_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "That does not look like a Spotify artist link. Expected "
+                    "something like https://open.spotify.com/artist/..."
+                ),
+            )
+        try:
+            await get_spotify_artist(spotify_id)  # confirms it exists
+        except SpotifyServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Spotify could not find that artist",
+            ) from exc
+        artist.spotify_artist_id = spotify_id
+    else:
+        artist.spotify_artist_id = None
+    await db.commit()
+    await db.refresh(artist)
+
+    count_result = await db.execute(
+        select(func.count(Video.id)).where(Video.artist_id == artist.id, Video.deleted_at.is_(None))
+    )
+    media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
+    app_data_root = await get_effective_app_data_path(db)
+    return ArtistRead(
+        id=artist.id,
+        name=artist.name,
+        lastfm_artist_name=artist.lastfm_artist_name,
+        wikipedia_url=artist.wikipedia_url,
+        spotify_artist_id=artist.spotify_artist_id,
+        bio=artist.bio,
+        image_url=_artist_image_url(artist, media_root, app_data_root, admin.id, image_display),
+        video_count=count_result.scalar() or 0,
+        created_at=artist.created_at,
+    )
+
+
+@router.get("/{artist_id}/spotify-image", include_in_schema=False)
+async def artist_spotify_image(
+    artist_id: uuid.UUID,
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Redirect to the artist's Spotify image, looked up at view time.
+
+    Spotify images are displayed but never stored. Falls back to the stored
+    image, then a placeholder, so an <img> pointing here always resolves.
+    """
+    artist = await db.scalar(
+        select(Artist).where(Artist.id == artist_id, Artist.deleted_at.is_(None))
+    )
+    if not artist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
+    url = None
+    if spotify_configured():
+        try:
+            url = await find_artist_image_url(artist.name, artist.spotify_artist_id)
+        except SpotifyServiceError as exc:
+            logger.warning("Spotify artist image lookup failed for %s: %s", artist.name, exc)
+    if not url:
+        url = _asset_url(
+            artist.image_path,
+            await get_effective_media_path(db),
+            await get_effective_app_data_path(db),
+            cache_bust=True,
+            user_id=_user.id,
+        ) or "/placeholder.svg"
+    return RedirectResponse(url, status_code=status.HTTP_302_FOUND, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.post("/{artist_id}/lastfm/apply", response_model=ArtistRead)
@@ -245,23 +525,17 @@ async def apply_lastfm_artist_match(
             detail="Last.fm artist name is required",
         )
 
-    info = await asyncio.to_thread(fetch_artist_info, chosen_name, api_key)
+    # The admin picked Last.fm, so the bio comes from it; images still follow
+    # the configured priority.
+    info = await _fetch_metadata(
+        db, artist, lastfm_name=chosen_name, wikipedia_url=artist.wikipedia_url, bio_sources=["lastfm"]
+    )
+    if not info:
+        _raise_if_lastfm_key_refused()
     override_local_images = await get_effective_lastfm_override_local_artist_images(db)
     artist.lastfm_artist_name = chosen_name
     if info:
-        fetched_bio = info.get("bio")
-        fetched_image_url = info.get("image_url")
-        canonical_name = (info.get("artist_name") or chosen_name).strip()
-        artist.lastfm_artist_name = canonical_name
-        if fetched_bio:
-            artist.bio = fetched_bio
-        if fetched_image_url and (
-            override_local_images
-            or not artist.image_path
-            or is_external_url(artist.image_path)
-        ):
-            artist.image_path = fetched_image_url
-        artist.lastfm_fetched_at = datetime.now(timezone.utc)
+        _apply_metadata(artist, info, override_local_images)
 
     await db.commit()
     await db.refresh(artist)
@@ -271,19 +545,16 @@ async def apply_lastfm_artist_match(
     )
     video_count = count_result.scalar() or 0
     media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
     app_data_root = await get_effective_app_data_path(db)
     return ArtistRead(
         id=artist.id,
         name=artist.name,
         lastfm_artist_name=artist.lastfm_artist_name,
+        wikipedia_url=artist.wikipedia_url,
+        spotify_artist_id=artist.spotify_artist_id,
         bio=artist.bio,
-        image_url=_asset_url(
-            artist.image_path,
-            media_root,
-            app_data_root,
-            cache_bust=True,
-            user_id=admin.id,
-        ),
+        image_url=_artist_image_url(artist, media_root, app_data_root, admin.id, image_display),
         video_count=video_count,
         created_at=artist.created_at,
     )
@@ -305,6 +576,7 @@ async def get_artist(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
 
     media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
     app_data_root = await get_effective_app_data_path(db)
     transcoding_enabled = await get_effective_transcoding_enabled(db)
     active_videos = [v for v in artist.videos if v.deleted_at is None]
@@ -322,14 +594,10 @@ async def get_artist(
         id=artist.id,
         name=artist.name,
         lastfm_artist_name=artist.lastfm_artist_name,
+        wikipedia_url=artist.wikipedia_url,
+        spotify_artist_id=artist.spotify_artist_id,
         bio=artist.bio,
-        image_url=_asset_url(
-            artist.image_path,
-            media_root,
-            app_data_root,
-            cache_bust=True,
-            user_id=_user.id,
-        ),
+        image_url=_artist_image_url(artist, media_root, app_data_root, _user.id, image_display),
         video_count=len(active_videos),
         play_count=play_count,
         created_at=artist.created_at,
@@ -373,7 +641,13 @@ async def get_artist_recommendations(
         limit=fetch_limit,
     )
     if not similar:
-        return ArtistRecommendationsPage(items=[], offset=offset, limit=limit, has_more=False)
+        return ArtistRecommendationsPage(
+            items=[],
+            offset=offset,
+            limit=limit,
+            has_more=False,
+            notice=LASTFM_PRO_REQUIRED_MESSAGE if lastfm_key_refused() else None,
+        )
 
     library_artists = (
         await db.execute(select(Artist).where(Artist.deleted_at.is_(None)))
@@ -417,20 +691,17 @@ async def get_artist_recommendations(
         video_count_map = {artist_id: int(count) for artist_id, count in count_rows}
 
     media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
     app_data_root = await get_effective_app_data_path(db)
     items = [
         ArtistRecommendationRead(
             id=row.id,
             name=row.name,
             lastfm_artist_name=row.lastfm_artist_name,
+            wikipedia_url=row.wikipedia_url,
+            spotify_artist_id=row.spotify_artist_id,
             bio=row.bio,
-            image_url=_asset_url(
-                row.image_path,
-                media_root,
-                app_data_root,
-                cache_bust=True,
-                user_id=_user.id,
-            ),
+            image_url=_artist_image_url(row, media_root, app_data_root, _user.id, image_display),
             video_count=video_count_map.get(row.id, 0),
             play_count=0,
             created_at=row.created_at,
@@ -479,20 +750,17 @@ async def update_artist(
     )
     video_count = count_result.scalar() or 0
     media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
     app_data_root = await get_effective_app_data_path(db)
 
     return ArtistRead(
         id=artist.id,
         name=artist.name,
         lastfm_artist_name=artist.lastfm_artist_name,
+        wikipedia_url=artist.wikipedia_url,
+        spotify_artist_id=artist.spotify_artist_id,
         bio=artist.bio,
-        image_url=_asset_url(
-            artist.image_path,
-            media_root,
-            app_data_root,
-            cache_bust=True,
-            user_id=admin.id,
-        ),
+        image_url=_artist_image_url(artist, media_root, app_data_root, admin.id, image_display),
         video_count=video_count,
         created_at=artist.created_at,
     )
@@ -511,30 +779,14 @@ async def refresh_artist_metadata(
     if not artist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
 
-    api_key = settings.LASTFM_API_KEY.strip()
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Last.fm integration is not configured on the server",
-        )
-
-    target_lastfm_name = (artist.lastfm_artist_name or artist.name).strip()
-    info = await asyncio.to_thread(fetch_artist_info, target_lastfm_name, api_key)
+    info = await _fetch_metadata(
+        db, artist, lastfm_name=artist.lastfm_artist_name, wikipedia_url=artist.wikipedia_url
+    )
+    if not info:
+        _raise_if_lastfm_key_refused()
     override_local_images = await get_effective_lastfm_override_local_artist_images(db)
     if info:
-        fetched_bio = info.get("bio")
-        fetched_image_url = info.get("image_url")
-        canonical_name = (info.get("artist_name") or target_lastfm_name).strip()
-        artist.lastfm_artist_name = canonical_name
-        if fetched_bio:
-            artist.bio = fetched_bio
-        if fetched_image_url and (
-            override_local_images
-            or not artist.image_path
-            or is_external_url(artist.image_path)
-        ):
-            artist.image_path = fetched_image_url
-        artist.lastfm_fetched_at = datetime.now(timezone.utc)
+        _apply_metadata(artist, info, override_local_images)
         await db.commit()
         await db.refresh(artist)
 
@@ -543,20 +795,17 @@ async def refresh_artist_metadata(
     )
     video_count = count_result.scalar() or 0
     media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
     app_data_root = await get_effective_app_data_path(db)
 
     return ArtistRead(
         id=artist.id,
         name=artist.name,
         lastfm_artist_name=artist.lastfm_artist_name,
+        wikipedia_url=artist.wikipedia_url,
+        spotify_artist_id=artist.spotify_artist_id,
         bio=artist.bio,
-        image_url=_asset_url(
-            artist.image_path,
-            media_root,
-            app_data_root,
-            cache_bust=True,
-            user_id=admin.id,
-        ),
+        image_url=_artist_image_url(artist, media_root, app_data_root, admin.id, image_display),
         video_count=video_count,
         created_at=artist.created_at,
     )
@@ -568,14 +817,14 @@ async def reset_artist_metadata(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Discard local bio/image edits and pull the artist fresh from Last.fm.
+    """Discard local bio/image edits and pull the artist fresh from the configured sources.
 
-    Distinct from refresh-metadata, which keeps whatever Last.fm name was
-    previously chosen and only fills gaps. Reset throws that choice away too and
+    Distinct from refresh-metadata, which keeps whatever Last.fm name and
+    Wikipedia article were previously chosen and only fills gaps. Reset throws that choice away too and
     looks the artist up by folder name again, which is the way back when a wrong
     match has been applied. An uploaded image is deleted rather than orphaned.
 
-    Clearing happens even when Last.fm is unavailable -- a reset that silently
+    Clearing happens even when the sources are unavailable -- a reset that silently
     did nothing because the network was down would be worse than an empty bio.
     """
     result = await db.execute(
@@ -591,24 +840,14 @@ async def reset_artist_metadata(
     artist.bio = None
     artist.image_path = None
     artist.lastfm_artist_name = None
+    artist.wikipedia_url = None
+    artist.spotify_artist_id = None
     artist.lastfm_fetched_at = None
 
-    api_key = settings.LASTFM_API_KEY.strip()
-    refreshed = False
-    if api_key:
-        info = await asyncio.to_thread(fetch_artist_info, artist.name.strip(), api_key)
-        if info:
-            fetched_bio = info.get("bio")
-            fetched_image_url = info.get("image_url")
-            artist.lastfm_artist_name = (
-                info.get("artist_name") or artist.name
-            ).strip()
-            if fetched_bio:
-                artist.bio = fetched_bio
-            if fetched_image_url:
-                artist.image_path = fetched_image_url
-            artist.lastfm_fetched_at = datetime.now(timezone.utc)
-            refreshed = True
+    info = await _fetch_metadata(db, artist, lastfm_name=None, wikipedia_url=None)
+    refreshed = info is not None
+    if info:
+        _apply_metadata(artist, info, override_local_images=True)
 
     await db.commit()
     await db.refresh(artist)
@@ -618,7 +857,7 @@ async def reset_artist_metadata(
         await asyncio.to_thread(_remove_stored_artist_image, previous_image, app_data_root)
 
     logger.info(
-        "Reset metadata for artist %s (lastfm refreshed=%s)", artist.name, refreshed
+        "Reset metadata for artist %s (refreshed=%s)", artist.name, refreshed
     )
 
     count_result = await db.execute(
@@ -626,19 +865,16 @@ async def reset_artist_metadata(
     )
     video_count = count_result.scalar() or 0
     media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
 
     return ArtistRead(
         id=artist.id,
         name=artist.name,
         lastfm_artist_name=artist.lastfm_artist_name,
+        wikipedia_url=artist.wikipedia_url,
+        spotify_artist_id=artist.spotify_artist_id,
         bio=artist.bio,
-        image_url=_asset_url(
-            artist.image_path,
-            media_root,
-            app_data_root,
-            cache_bust=True,
-            user_id=admin.id,
-        ),
+        image_url=_artist_image_url(artist, media_root, app_data_root, admin.id, image_display),
         video_count=video_count,
         created_at=artist.created_at,
     )
@@ -677,6 +913,7 @@ async def upload_artist_image(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
 
     media_root = await get_effective_media_path(db)
+    image_display = await _artist_image_display(db)
     app_data_root = await get_effective_app_data_path(db)
     ext = (os.path.splitext(file.filename or "img.jpg")[1] or ".jpg").lower()
     if ext not in ALLOWED_IMAGE_EXTENSIONS:
@@ -711,14 +948,10 @@ async def upload_artist_image(
         id=artist.id,
         name=artist.name,
         lastfm_artist_name=artist.lastfm_artist_name,
+        wikipedia_url=artist.wikipedia_url,
+        spotify_artist_id=artist.spotify_artist_id,
         bio=artist.bio,
-        image_url=_asset_url(
-            artist.image_path,
-            media_root,
-            app_data_root,
-            cache_bust=True,
-            user_id=admin.id,
-        ),
+        image_url=_artist_image_url(artist, media_root, app_data_root, admin.id, image_display),
         video_count=video_count,
         created_at=artist.created_at,
     )

@@ -6,8 +6,8 @@ watchlists, play history and in-browser playback with transcoding for formats
 your browser cannot handle natively.
 
 Popinn runs entirely on your own hardware. Nothing is uploaded anywhere, and the
-only outbound calls are the optional Last.fm, Spotify and MusicBrainz lookups
-used to enrich artist and track metadata.
+only outbound calls are the optional Wikipedia, Last.fm, Spotify, Deezer and
+MusicBrainz lookups used to enrich artist and track metadata.
 
 ---
 
@@ -42,7 +42,9 @@ used to enrich artist and track metadata.
 
 **Metadata**
 
-- Artist biographies and images from Last.fm
+- Artist biographies from Wikipedia or Last.fm, and images from Spotify, Deezer,
+  Wikipedia or Last.fm, in a priority order you set
+- Pick the exact Wikipedia article or Spotify artist when names are ambiguous
 - Track metadata lookup via Spotify (needs a Premium subscription) or MusicBrainz (no account needed)
 - Manual overrides for everything, plus per-artist image upload
 
@@ -113,6 +115,40 @@ administrator. Then go to **Settings → Scan Library** to index your media.
 
 If you find a vulnerability, please open a private security advisory on the
 repository rather than a public issue.
+
+---
+
+## Credits
+
+**Metadata sources**
+
+Popinn fetches artist and track details from these services. Each is optional,
+and you choose their order in Settings.
+
+- [Wikipedia](https://www.wikipedia.org/): artist biographies, shown with a link
+  to the article. The text is licensed under
+  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- [Last.fm](https://www.last.fm/): artist biographies and similar-artist and
+  similar-track recommendations. From 1 December 2026, the account that owns
+  the API key needs Last.fm Pro.
+- [Spotify](https://www.spotify.com/): track metadata and artist images. Images
+  are shown directly from Spotify and never stored.
+- [Deezer](https://www.deezer.com/): artist images.
+- [MusicBrainz](https://musicbrainz.org/): track metadata, no account needed.
+
+Artist names, images and biographies belong to their respective owners and
+are shown for personal library use.
+
+**Built with**
+
+[FastAPI](https://fastapi.tiangolo.com/), [SQLAlchemy](https://www.sqlalchemy.org/),
+[Alembic](https://alembic.sqlalchemy.org/), [PostgreSQL](https://www.postgresql.org/),
+[FFmpeg](https://ffmpeg.org/), [React](https://react.dev/), [Vite](https://vite.dev/),
+[TanStack Query](https://tanstack.com/query), [Tailwind CSS](https://tailwindcss.com/),
+[shadcn/ui](https://ui.shadcn.com/) on [Radix UI](https://www.radix-ui.com/),
+[hls.js](https://github.com/video-dev/hls.js), [Framer Motion](https://motion.dev/),
+[Lucide](https://lucide.dev/) icons, and the [Geist](https://vercel.com/font) and
+[Instrument Serif](https://fonts.google.com/specimen/Instrument+Serif) fonts.
 
 ---
 

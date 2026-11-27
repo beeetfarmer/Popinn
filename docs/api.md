@@ -98,9 +98,14 @@ Whether a play counts as a view is decided server-side from
 | `DELETE` | `/artists/{artist_id}` | Soft-delete |
 | `PUT` | `/artists/{artist_id}/image` | Upload artwork (multipart) |
 | `GET` | `/artists/{artist_id}/recommendations` | Similar artists |
-| `POST` | `/artists/{artist_id}/refresh-metadata` | Re-fetch from Last.fm |
+| `POST` | `/artists/{artist_id}/refresh-metadata` | Re-fetch bio and image from the configured sources |
 | `GET` | `/artists/lastfm/search` | Search Last.fm |
 | `POST` | `/artists/{artist_id}/lastfm/apply` | Apply a chosen Last.fm match — useful when the folder name is ambiguous |
+| `GET` | `/artists/wikipedia/search` | Search Wikipedia articles (top 10) |
+| `POST` | `/artists/{artist_id}/wikipedia/apply` | Use a chosen or pasted Wikipedia article for the bio |
+| `GET` | `/artists/spotify/search` | Search Spotify artists (top 10) |
+| `POST` | `/artists/{artist_id}/spotify/apply` | Pin the Spotify artist whose image is displayed (link, URI or ID); empty clears it |
+| `GET` | `/artists/{artist_id}/spotify-image` | Redirect to the artist's Spotify image (pinned artist or name match, looked up live, never stored) |
 
 ---
 

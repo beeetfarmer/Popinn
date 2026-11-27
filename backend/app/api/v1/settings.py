@@ -27,9 +27,12 @@ from app.schemas.settings import (
     ThumbnailRegenerateResponse,
 )
 from app.services.background_jobs import submit_job
+from app.services.lastfm import lastfm_key_refused
 from app.services.playback import is_counted_view
 from app.services.runtime_settings import (
     SETTING_APP_DATA_PATH,
+    SETTING_ARTIST_BIO_SOURCES,
+    SETTING_ARTIST_IMAGE_SOURCES,
     SETTING_LASTFM_OVERRIDE_LOCAL_ARTIST_IMAGES,
     SETTING_LIBRARY_SCAN_INTERVAL_MINUTES,
     SETTING_MEDIA_PATH,
@@ -38,6 +41,8 @@ from app.services.runtime_settings import (
     SETTING_VIDEO_INFINITE_SCROLL,
     SETTING_VIEW_THRESHOLD_RATIO,
     get_effective_app_data_path,
+    get_effective_artist_bio_sources,
+    get_effective_artist_image_sources,
     get_effective_lastfm_override_local_artist_images,
     get_effective_library_scan_interval_minutes,
     get_effective_media_path,
@@ -60,6 +65,8 @@ EXPORTABLE_SETTING_KEYS = {
     SETTING_VIDEO_INFINITE_SCROLL,
     SETTING_LIBRARY_SCAN_INTERVAL_MINUTES,
     SETTING_METADATA_PROVIDER,
+    SETTING_ARTIST_BIO_SOURCES,
+    SETTING_ARTIST_IMAGE_SOURCES,
 }
 
 
@@ -103,6 +110,9 @@ async def get_runtime_settings(
         library_scan_interval_minutes=await get_effective_library_scan_interval_minutes(db),
         metadata_provider=await get_effective_metadata_provider(db),
         spotify_configured=spotify_configured(),
+        lastfm_key_refused=lastfm_key_refused(),
+        artist_bio_sources=await get_effective_artist_bio_sources(db),
+        artist_image_sources=await get_effective_artist_image_sources(db),
     )
 
 
@@ -183,6 +193,10 @@ async def update_runtime_settings(
         str(body.library_scan_interval_minutes),
     )
     await set_setting_value(db, SETTING_METADATA_PROVIDER, body.metadata_provider)
+    if body.artist_bio_sources is not None:
+        await set_setting_value(db, SETTING_ARTIST_BIO_SOURCES, ",".join(dict.fromkeys(body.artist_bio_sources)))
+    if body.artist_image_sources is not None:
+        await set_setting_value(db, SETTING_ARTIST_IMAGE_SOURCES, ",".join(dict.fromkeys(body.artist_image_sources)))
     if abs(existing_threshold_ratio - threshold_ratio) > 1e-9:
         await db.execute(
             update(VideoPlay).values(
@@ -212,6 +226,9 @@ async def update_runtime_settings(
         library_scan_interval_minutes=body.library_scan_interval_minutes,
         metadata_provider=body.metadata_provider,
         spotify_configured=spotify_configured(),
+        lastfm_key_refused=lastfm_key_refused(),
+        artist_bio_sources=await get_effective_artist_bio_sources(db),
+        artist_image_sources=await get_effective_artist_image_sources(db),
     )
 
 

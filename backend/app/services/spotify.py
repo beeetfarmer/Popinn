@@ -275,3 +275,91 @@ async def search_tracks(
         )
 
     return results
+
+
+# Artist image URLs looked up for display. Spotify's terms do not allow storing
+# its content, so this is only an in-memory cache of the URL, never the image.
+_ARTIST_IMAGE_TTL_SECONDS = 6 * 3600
+_artist_image_cache: dict[str, tuple[str | None, float]] = {}
+_ARTIST_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
+
+
+def _normalize_name(value: str | None) -> str:
+    return "".join(ch.lower() for ch in (value or "") if ch.isalnum())
+
+
+def parse_spotify_artist_id(value: str) -> str | None:
+    """Artist ID from an open.spotify.com/artist/... link, a spotify:artist:... URI or a bare ID."""
+    candidate = (value or "").strip()
+    match = re.search(r"(?:open\.spotify\.com/(?:[a-z-]+/)?artist/|spotify:artist:)([A-Za-z0-9]{22})", candidate)
+    if match:
+        return match.group(1)
+    return candidate if _ARTIST_ID_RE.match(candidate) else None
+
+
+async def _artist_api(path: str, params: dict | None, context: str) -> dict:
+    token = await get_access_token(settings.SPOTIFY_CLIENT_ID.strip(), settings.SPOTIFY_CLIENT_SECRET.strip())
+    async with httpx.AsyncClient(timeout=15) as client:
+        return await _request_json_with_retries(
+            client,
+            method="GET",
+            url=path,
+            params=params,
+            headers={"Authorization": f"Bearer {token}"},
+            context=context,
+        )
+
+
+def _artist_item(artist: dict) -> dict:
+    images = artist.get("images") or []
+    return {
+        "id": artist.get("id"),
+        "name": artist.get("name") or "",
+        "image_url": images[0].get("url") if images else None,
+        "followers": (artist.get("followers") or {}).get("total"),
+        "genres": artist.get("genres") or [],
+        "url": (artist.get("external_urls") or {}).get("spotify"),
+    }
+
+
+async def search_artists(query: str, *, limit: int = 10) -> list[dict]:
+    data = await _artist_api(SPOTIFY_SEARCH_URL, {"q": query, "type": "artist", "limit": max(1, min(limit, 20))}, "artist search")
+    return [
+        _artist_item(a)
+        for a in (data.get("artists") or {}).get("items") or []
+        if isinstance(a, dict) and a.get("id")
+    ]
+
+
+async def get_artist(artist_id: str) -> dict:
+    return _artist_item(await _artist_api(f"{SPOTIFY_ARTISTS_URL}/{artist_id}", None, "artist lookup"))
+
+
+async def find_artist_image_url(artist_name: str, spotify_artist_id: str | None = None) -> str | None:
+    """Image URL of the artist's Spotify profile, or None.
+
+    A pinned spotify_artist_id (chosen by an admin) is used as is. Otherwise
+    the name is searched: namesakes are common ("Twice" matches several
+    artists), so among matches prefer the exact spelling ("YUNA" of ITZY over
+    the bigger Malaysian "Yuna"), then the most followers, then Spotify's
+    top-ranked.
+    """
+    key = f"id:{spotify_artist_id}" if spotify_artist_id else _normalize_name(artist_name)
+    if not key:
+        return None
+    cached = _artist_image_cache.get(key)
+    if cached and cached[1] > time.time():
+        return cached[0]
+
+    if spotify_artist_id:
+        url = (await get_artist(spotify_artist_id))["image_url"]
+    else:
+        exact = artist_name.strip()
+        matches = [
+            a for a in await search_artists(artist_name)
+            if _normalize_name(a["name"]) == key and a["image_url"]
+        ]
+        best = max(matches, key=lambda a: (a["name"] == exact, a["followers"] or 0), default=None)
+        url = best["image_url"] if best else None
+    _artist_image_cache[key] = (url, time.time() + _ARTIST_IMAGE_TTL_SECONDS)
+    return url

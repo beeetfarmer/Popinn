@@ -48,6 +48,8 @@ const PER_PAGE = 10;
 const SCROLL_CHUNK = 24;
 const LASTFM_ATTRIBUTION_FOOTER_REGEX =
   /\n*\s*Artist information powered by Last\.fm\s*\n*Last\.fm:\s*(https?:\/\/www\.last\.fm\/music\/\S+)\s*$/i;
+const WIKIPEDIA_ATTRIBUTION_FOOTER_REGEX =
+  /\n*\s*Biography from Wikipedia, licensed under CC BY-SA 4\.0\s*\n*Wikipedia:\s*(https?:\/\/[a-z-]+\.wikipedia\.org\/wiki\/\S+)\s*$/i;
 
 interface SpotifyTrackMatch {
   spotify_track_id: string;
@@ -91,11 +93,28 @@ interface ArtistRecommendationsPage {
   offset: number;
   limit: number;
   has_more: boolean;
+  notice?: string | null;
 }
 
 interface LastfmArtistSearchItem {
   name: string;
   image_url: string | null;
+  url: string | null;
+}
+
+interface WikipediaArticleSearchItem {
+  title: string;
+  description: string | null;
+  thumbnail_url: string | null;
+  url: string;
+}
+
+interface SpotifyArtistSearchItem {
+  id: string;
+  name: string;
+  image_url: string | null;
+  followers: number | null;
+  genres: string[];
   url: string | null;
 }
 
@@ -110,12 +129,19 @@ function getResponsiveRecommendationLimit(): number {
   return 6;
 }
 
-function parseArtistBio(rawBio: string | null | undefined): { body: string; lastfmUrl: string | null } {
+function parseArtistBio(rawBio: string | null | undefined): {
+  body: string;
+  lastfmUrl: string | null;
+  wikipediaUrl: string | null;
+} {
   const text = rawBio || "";
-  const match = text.match(LASTFM_ATTRIBUTION_FOOTER_REGEX);
-  const lastfmUrl = match?.[1] || null;
-  const body = text.replace(LASTFM_ATTRIBUTION_FOOTER_REGEX, "").trim();
-  return { body, lastfmUrl };
+  const lastfmUrl = text.match(LASTFM_ATTRIBUTION_FOOTER_REGEX)?.[1] || null;
+  const wikipediaUrl = text.match(WIKIPEDIA_ATTRIBUTION_FOOTER_REGEX)?.[1] || null;
+  const body = text
+    .replace(LASTFM_ATTRIBUTION_FOOTER_REGEX, "")
+    .replace(WIKIPEDIA_ATTRIBUTION_FOOTER_REGEX, "")
+    .trim();
+  return { body, lastfmUrl, wikipediaUrl };
 }
 
 function getCookie(name: string): string | null {
@@ -148,6 +174,18 @@ export default function ArtistDetail() {
   const [lastfmSearchResults, setLastfmSearchResults] = useState<LastfmArtistSearchItem[]>([]);
   const [lastfmUrlInput, setLastfmUrlInput] = useState("");
   const [applyingLastfmUrl, setApplyingLastfmUrl] = useState(false);
+  const [editWikipediaUrl, setEditWikipediaUrl] = useState("");
+  const [wikiSearchQuery, setWikiSearchQuery] = useState("");
+  const [wikiSearching, setWikiSearching] = useState(false);
+  const [wikiSearchResults, setWikiSearchResults] = useState<WikipediaArticleSearchItem[]>([]);
+  const [wikiUrlInput, setWikiUrlInput] = useState("");
+  const [applyingWiki, setApplyingWiki] = useState(false);
+  const [editSpotifyId, setEditSpotifyId] = useState("");
+  const [spotifySearchQuery, setSpotifySearchQuery] = useState("");
+  const [spotifySearching, setSpotifySearching] = useState(false);
+  const [spotifySearchResults, setSpotifySearchResults] = useState<SpotifyArtistSearchItem[]>([]);
+  const [spotifyUrlInput, setSpotifyUrlInput] = useState("");
+  const [applyingSpotify, setApplyingSpotify] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
@@ -193,7 +231,10 @@ export default function ArtistDetail() {
 
   // MusicBrainz asks for ~1 request/second, so "Search All" must pace itself
   // when it's the active provider; Spotify tolerates the concurrent burst.
-  const { data: metadataRuntime } = useQuery<{ metadata_provider: "spotify" | "musicbrainz" }>({
+  const { data: metadataRuntime } = useQuery<{
+    metadata_provider: "spotify" | "musicbrainz";
+    spotify_configured: boolean;
+  }>({
     queryKey: ["runtime-metadata-provider"],
     queryFn: () => api.get("/settings/runtime"),
     enabled: isAdmin,
@@ -310,7 +351,7 @@ export default function ArtistDetail() {
       if (!isAdmin) throw new Error("Admin access required");
       const body: Record<string, unknown> = {};
       if (editName.trim() && editName.trim() !== artist?.name) body.name = editName.trim();
-      if (editBio.trim() !== (artist?.bio || "")) body.bio = editBio.trim() || null;
+      if (editBio.trim() !== parseArtistBio(artist?.bio).body) body.bio = editBio.trim() || null;
       if ((editLastfmArtistName.trim() || null) !== (artist?.lastfm_artist_name || null)) {
         body.lastfm_artist_name = editLastfmArtistName.trim() || null;
       }
@@ -362,6 +403,14 @@ export default function ArtistDetail() {
       setLastfmSearchQuery(artist.lastfm_artist_name || artist.name);
       setLastfmSearchResults([]);
       setLastfmUrlInput(parseArtistBio(artist.bio).lastfmUrl || "");
+      setEditWikipediaUrl(artist.wikipedia_url || "");
+      setWikiSearchQuery(artist.name);
+      setWikiSearchResults([]);
+      setWikiUrlInput("");
+      setEditSpotifyId(artist.spotify_artist_id || "");
+      setSpotifySearchQuery(artist.name);
+      setSpotifySearchResults([]);
+      setSpotifyUrlInput("");
       setEditOpen(true);
     }
   }
@@ -441,6 +490,89 @@ export default function ArtistDetail() {
       toast.error(getErrorMessage(error, "Failed to apply Last.fm link"));
     } finally {
       setApplyingLastfmUrl(false);
+    }
+  }
+
+  async function searchWikipedia() {
+    if (!isAdmin) return;
+    const query = wikiSearchQuery.trim();
+    if (!query) return;
+    setWikiSearching(true);
+    try {
+      const results = await api.get<WikipediaArticleSearchItem[]>(
+        `/artists/wikipedia/search?q=${encodeURIComponent(query)}&limit=10`
+      );
+      setWikiSearchResults(results);
+      if (results.length === 0) toast.info("No Wikipedia articles found");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to search Wikipedia"));
+    } finally {
+      setWikiSearching(false);
+    }
+  }
+
+  // Picked from the search results or pasted; either way the server validates
+  // the link and refuses missing or disambiguation pages.
+  async function applyWikipediaArticle(url: string) {
+    if (!isAdmin || !url.trim()) return;
+    setApplyingWiki(true);
+    try {
+      const updated = await api.post<{ wikipedia_url: string | null; bio: string | null }>(
+        `/artists/${id}/wikipedia/apply`,
+        { wikipedia_url: url.trim() }
+      );
+      setEditWikipediaUrl(updated.wikipedia_url || "");
+      setEditBio(parseArtistBio(updated.bio).body);
+      setWikiSearchResults([]);
+      setWikiUrlInput("");
+      queryClient.invalidateQueries({ queryKey: ["artist", id] });
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      toast.success("Wikipedia article applied");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to apply Wikipedia article"));
+    } finally {
+      setApplyingWiki(false);
+    }
+  }
+
+  async function searchSpotifyArtists() {
+    if (!isAdmin) return;
+    const query = spotifySearchQuery.trim();
+    if (!query) return;
+    setSpotifySearching(true);
+    try {
+      const results = await api.get<SpotifyArtistSearchItem[]>(
+        `/artists/spotify/search?q=${encodeURIComponent(query)}&limit=10`
+      );
+      setSpotifySearchResults(results);
+      if (results.length === 0) toast.info("No Spotify artists found");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to search Spotify"));
+    } finally {
+      setSpotifySearching(false);
+    }
+  }
+
+  // Pins which Spotify artist the displayed image comes from; an empty value
+  // clears the pin and goes back to matching by name.
+  async function applySpotifyArtist(value: string) {
+    if (!isAdmin) return;
+    setApplyingSpotify(true);
+    try {
+      const updated = await api.post<{ spotify_artist_id: string | null }>(
+        `/artists/${id}/spotify/apply`,
+        { spotify_artist: value.trim() || null }
+      );
+      setEditSpotifyId(updated.spotify_artist_id || "");
+      setSpotifySearchResults([]);
+      setSpotifyUrlInput("");
+      queryClient.invalidateQueries({ queryKey: ["artist", id] });
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      toast.success(updated.spotify_artist_id ? "Spotify artist pinned" : "Spotify pin cleared");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to set Spotify artist"));
+    } finally {
+      setApplyingSpotify(false);
     }
   }
 
@@ -849,7 +981,7 @@ export default function ArtistDetail() {
         </section>
 
         {/* Bio */}
-        {(parsedBio.body || parsedBio.lastfmUrl) && (
+        {(parsedBio.body || parsedBio.lastfmUrl || parsedBio.wikipediaUrl) && (
           <Reveal className="mb-14 max-w-3xl">
             <p className="eyebrow mb-3">About</p>
             <p className="whitespace-pre-line text-[15px] leading-relaxed text-foreground/80">
@@ -865,6 +997,28 @@ export default function ArtistDetail() {
                   className="text-primary hover:underline"
                 >
                   Last.fm artist page
+                </a>
+              </p>
+            )}
+            {parsedBio.wikipediaUrl && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Biography from Wikipedia, licensed under{" "}
+                <a
+                  href="https://creativecommons.org/licenses/by-sa/4.0/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  CC BY-SA 4.0
+                </a>{" "}
+                ·{" "}
+                <a
+                  href={parsedBio.wikipediaUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  Wikipedia article
                 </a>
               </p>
             )}
@@ -960,7 +1114,7 @@ export default function ArtistDetail() {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              No recommended artists from your library for this artist yet.
+              {artistRecommendations?.notice || "No recommended artists from your library for this artist yet."}
             </p>
           )}
         </section>
@@ -984,6 +1138,216 @@ export default function ArtistDetail() {
                   placeholder="Artist biography..."
                 />
               </div>
+              <div className="rounded-xl border border-white/10 p-3">
+                <label className="mb-1 block text-sm font-medium text-foreground">
+                  Bio from Wikipedia
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    value={wikiSearchQuery}
+                    onChange={(e) => setWikiSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        searchWikipedia();
+                      }
+                    }}
+                    placeholder="Search Wikipedia..."
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={searchWikipedia}
+                    disabled={wikiSearching || !wikiSearchQuery.trim()}
+                  >
+                    {wikiSearching ? "Searching..." : "Search"}
+                  </Button>
+                </div>
+                {wikiSearchResults.length > 0 && (
+                  <div className="mt-2 max-h-56 space-y-1 overflow-y-auto pr-1">
+                    {wikiSearchResults.map((item) => (
+                      <button
+                        key={item.url}
+                        type="button"
+                        disabled={applyingWiki}
+                        onClick={() => applyWikipediaArticle(item.url)}
+                        className="flex w-full items-center gap-2 rounded-xl border border-white/10 px-2 py-1.5 text-left transition-colors hover:bg-white/[0.06] disabled:opacity-50"
+                      >
+                        {item.thumbnail_url ? (
+                          <img
+                            src={item.thumbnail_url}
+                            alt=""
+                            className="h-9 w-9 shrink-0 rounded-md object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="h-9 w-9 shrink-0 rounded-md bg-secondary" />
+                        )}
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-foreground">{item.title}</p>
+                          {item.description && (
+                            <p className="truncate text-[11px] text-muted-foreground">{item.description}</p>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 truncate text-xs text-muted-foreground">
+                  Matched article:{" "}
+                  {editWikipediaUrl ? (
+                    <a
+                      href={editWikipediaUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      {decodeURIComponent(editWikipediaUrl.split("/wiki/")[1] || editWikipediaUrl).replace(/_/g, " ")}
+                    </a>
+                  ) : (
+                    "Not set"
+                  )}
+                </p>
+                <div className="mt-3 border-t border-border pt-3">
+                  <label className="mb-1 block text-sm font-medium text-foreground">
+                    Or paste a Wikipedia article link
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={wikiUrlInput}
+                      onChange={(e) => setWikiUrlInput(e.target.value)}
+                      placeholder="https://en.wikipedia.org/wiki/Artist"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => applyWikipediaArticle(wikiUrlInput)}
+                      disabled={applyingWiki || !wikiUrlInput.trim()}
+                    >
+                      {applyingWiki ? "Applying..." : "Apply"}
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Uses the first two paragraphs of the article as the bio.
+                  </p>
+                </div>
+              </div>
+              {metadataRuntime?.spotify_configured && (
+                <div className="rounded-xl border border-white/10 p-3">
+                  <label className="mb-1 block text-sm font-medium text-foreground">
+                    Spotify image match
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={spotifySearchQuery}
+                      onChange={(e) => setSpotifySearchQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          searchSpotifyArtists();
+                        }
+                      }}
+                      placeholder="Search Spotify artists..."
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={searchSpotifyArtists}
+                      disabled={spotifySearching || !spotifySearchQuery.trim()}
+                    >
+                      {spotifySearching ? "Searching..." : "Search"}
+                    </Button>
+                  </div>
+                  {spotifySearchResults.length > 0 && (
+                    <div className="mt-2 max-h-56 space-y-1 overflow-y-auto pr-1">
+                      {spotifySearchResults.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          disabled={applyingSpotify}
+                          onClick={() => applySpotifyArtist(item.id)}
+                          className="flex w-full items-center gap-2 rounded-xl border border-white/10 px-2 py-1.5 text-left transition-colors hover:bg-white/[0.06] disabled:opacity-50"
+                        >
+                          {item.image_url ? (
+                            <img
+                              src={item.image_url}
+                              alt=""
+                              className="h-9 w-9 shrink-0 rounded-full object-cover"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="h-9 w-9 shrink-0 rounded-full bg-secondary" />
+                          )}
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-semibold text-foreground">{item.name}</p>
+                            <p className="truncate text-[11px] text-muted-foreground">
+                              {[
+                                item.genres.slice(0, 2).join(", "),
+                                item.followers != null
+                                  ? `${item.followers.toLocaleString()} followers`
+                                  : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" · ") || "No details"}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <p className="truncate text-xs text-muted-foreground">
+                      Pinned artist:{" "}
+                      {editSpotifyId ? (
+                        <a
+                          href={`https://open.spotify.com/artist/${editSpotifyId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-primary hover:underline"
+                        >
+                          Open on Spotify
+                        </a>
+                      ) : (
+                        "Not set (matched by name)"
+                      )}
+                    </p>
+                    {editSpotifyId && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={applyingSpotify}
+                        onClick={() => applySpotifyArtist("")}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                  <div className="mt-3 border-t border-border pt-3">
+                    <label className="mb-1 block text-sm font-medium text-foreground">
+                      Or paste a Spotify artist link
+                    </label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={spotifyUrlInput}
+                        onChange={(e) => setSpotifyUrlInput(e.target.value)}
+                        placeholder="https://open.spotify.com/artist/..."
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => applySpotifyArtist(spotifyUrlInput)}
+                        disabled={applyingSpotify || !spotifyUrlInput.trim()}
+                      >
+                        {applyingSpotify ? "Applying..." : "Apply"}
+                      </Button>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Only used when Spotify is enabled in Settings → artist image sources. The image is shown live, never saved.
+                    </p>
+                  </div>
+                </div>
+              )}
               <div className="rounded-xl border border-white/10 p-3">
                 <label className="mb-1 block text-sm font-medium text-foreground">
                   Match Artist from Last.fm
@@ -1084,11 +1448,11 @@ export default function ArtistDetail() {
             <AlertDialogHeader>
               <AlertDialogTitle>Reset bio and image?</AlertDialogTitle>
               <AlertDialogDescription>
-                This clears the bio, the image and the matched Last.fm artist for
-                {" "}
+                This clears the bio, the image, the matched Wikipedia article,
+                pinned Spotify artist and Last.fm artist for{" "}
                 {artist.name}, deletes any image you uploaded, then looks the
-                artist up on Last.fm again by folder name. Your local edits
-                cannot be recovered.
+                artist up again by folder name using your bio and image source
+                priority. Your local edits cannot be recovered.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
